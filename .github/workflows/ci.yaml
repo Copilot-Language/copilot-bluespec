@@ -1,0 +1,83 @@
+name: copilot-bluespec
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # The CACHE_VERSION can be updated to force the use of a new cache if
+  # the current cache contents become corrupted/invalid.  This can
+  # sometimes happen when (for example) the OS version is changed but
+  # older .so files are cached, which can have various effects
+  # (e.g. cabal complains it can't find a valid version of the "happy"
+  # tool).
+  CACHE_VERSION: 1
+  BSC_VERSION: "2023.07"
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04]
+        ghc-version: ["8.10.7", "9.2.8", "9.4.8"]
+        cabal: [ '3.10.2.0' ]
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+
+      - uses: haskell/actions/setup@v1
+        id: setup-haskell
+        with:
+          ghc-version: ${{ matrix.ghc-version }}
+          cabal-version: ${{ matrix.cabal }}
+
+      - uses: actions/cache/restore@v3
+        name: Restore cabal store cache
+        with:
+          path: |
+            ${{ steps.setup-haskell.outputs.cabal-store }}
+            dist-newstyle
+          key: ${{ env.CACHE_VERSION }}-cabal-${{ matrix.os }}-${{ matrix.ghc-version }}-${{ hashFiles(format('cabal.GHC-{0}.config', matrix.ghc-version)) }}-${{ github.sha }}
+          restore-keys: |
+            ${{ env.CACHE_VERSION }}-cabal-${{ matrix.os }}-${{ matrix.ghc-version }}-${{ hashFiles(format('cabal.GHC-{0}.config', matrix.ghc-version)) }}-
+
+      - shell: bash
+        name: Install bsc
+        run: |
+          curl -o bsc.tar.gz -sL "https://github.com/B-Lang-org/bsc/releases/download/${{ env.BSC_VERSION }}/bsc-${{ env.BSC_VERSION }}-ubuntu-22.04.tar.gz"
+          unzip -o bsc.tar.gz
+          rm bsc.tar.gz
+          echo "$PWD/bsc/bin" >> $GITHUB_PATH
+
+      - shell: bash
+        name: Update
+        run: cabal update
+
+      - shell: bash
+        name: Configure
+        run: cabal configure --enable-tests -j2 all
+
+      - shell: bash
+        name: Build copilot-bluespec
+        run: cabal build pkg:copilot-bluespec
+
+      - shell: bash
+        name: Test copilot-bluespec
+        run: cabal test pkg:copilot-bluespec
+
+      - shell: bash
+        name: Check copilot-bluespec.cabal
+        run: cabal check
+
+      - uses: actions/cache/save@v3
+        name: Save cabal store cache
+        if: always()
+        with:
+          path: |
+            ${{ steps.setup-haskell.outputs.cabal-store }}
+            dist-newstyle
+          key: ${{ env.CACHE_VERSION }}-cabal-${{ matrix.os }}-${{ matrix.ghc-version }}-${{ hashFiles(format('cabal.GHC-{0}.config', matrix.ghc-version)) }}-${{ github.sha }}
