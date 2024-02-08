@@ -48,10 +48,12 @@ jobs:
       - shell: bash
         name: Install bsc
         run: |
-          curl -o bsc.tar.gz -sL "https://github.com/B-Lang-org/bsc/releases/download/${{ env.BSC_VERSION }}/bsc-${{ env.BSC_VERSION }}-ubuntu-22.04.tar.gz"
-          unzip -o bsc.tar.gz
-          rm bsc.tar.gz
-          echo "$PWD/bsc/bin" >> $GITHUB_PATH
+          wget "https://github.com/B-Lang-org/bsc/releases/download/${{ env.BSC_VERSION }}/$BSC_DIR.tar.gz"
+          tar -xzf $BSC_DIR.tar.gz
+          rm $BSC_DIR.tar.gz
+          echo "$PWD/$BSC_DIR/bin" >> $GITHUB_PATH
+        env:
+          BSC_DIR: "bsc-${{ env.BSC_VERSION }}-ubuntu-22.04"
 
       - shell: bash
         name: Update
