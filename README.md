@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.com/Copilot-Language/copilot.svg?branch=master)](https://app.travis-ci.com/github/Copilot-Language/copilot)
+[![Build Status](https://github.com/Copilot-Language/copilot-bluespec/workflows/copilot-bluespec/badge.svg)](https://github.com/Copilot-Language/copilot-bluespec/actions?query=workflow%3Acopilot-bluespec)
 
 # Copilot: a stream DSL
 Copilot-Bluespec implements a Bluespec backend for Copilot, producing code that
