@@ -15,10 +15,18 @@ for systems with hard realtime requirements.
 
 ## Installation
 Copilot-Bluespec can be found on
-[Hackage](https://hackage.haskell.org/package/copilot-bluespec). It is
-typically only installed as part of the complete Copilot distribution. For
-installation instructions, please refer to the [Copilot
-website](https://copilot-language.github.io).
+[Hackage](https://hackage.haskell.org/package/copilot-bluespec). It is intended
+to be installed alongside a Copilot distribution by running the following
+commands:
+
+```
+$ cabal update
+$ cabal install copilot
+$ cabal install copilot-bluespec
+```
+
+For more detailed instructions on how to install Copilot, please refer to the
+[Copilot website](https://copilot-language.github.io).
 
 The generated Bluespec code requires `bsc` (the Bluespec compiler) in order to
 be compiled. `bsc` can be downloaded
