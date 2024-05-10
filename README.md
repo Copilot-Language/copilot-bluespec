@@ -32,6 +32,17 @@ The generated Bluespec code requires `bsc` (the Bluespec compiler) in order to
 be compiled. `bsc` can be downloaded
 [here](https://github.com/B-Lang-org/bsc/releases).
 
+We also provide a [Dockerfile](Dockerfile) which automates the process of
+installing Copilot, Copilot-Bluespec, and `bsc`. The Dockerfile can be built and
+run using the following commands:
+
+```
+$ docker build -t <tag> .
+$ docker run -it <tag>
+```
+
+Where `<tag>` is a unique name for the Docker image.
+
 ## Further information
 For further information, install instructions and documentation, please visit
 the Copilot website:
