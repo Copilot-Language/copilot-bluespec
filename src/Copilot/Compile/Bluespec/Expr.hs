@@ -138,6 +138,11 @@ transOp2 op e1 e2 =
     BwShiftL _ _ -> app $ BS.idLshAt BS.NoPos
     BwShiftR _ _ -> app $ BS.idRshAt BS.NoPos
     Index    _   -> cIndexVector e1 e2
+    UpdateField (Struct _) _ f ->
+      let field :: BS.FString
+          field = fromString $ lowercaseName $ accessorName f in
+      BS.CStructUpd e1 [(BS.mkId BS.NoPos field, e2)]
+    UpdateField _ _ _ -> impossible "transOp2" "copilot-bluespec"
 
     -- Unsupported operations (see
     -- https://github.com/B-Lang-org/bsc/discussions/534)

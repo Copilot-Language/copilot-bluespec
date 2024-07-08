@@ -44,7 +44,7 @@ library
                           , filepath          >= 1.4    && < 1.5
                           , pretty            >= 1.1.2  && < 1.2
 
-                          , copilot-core      >= 3.19   && < 3.20
+                          , copilot-core      >= 3.20   && < 3.21
                           , language-bluespec >= 0.1    && < 0.2
 
   exposed-modules         : Copilot.Compile.Bluespec
