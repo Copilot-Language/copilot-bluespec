@@ -40,6 +40,7 @@ import Test.QuickCheck                      (Arbitrary, Gen, Property,
                                              oneof, vectorOf, withMaxSuccess,
                                              (.&&.))
 import Test.QuickCheck.Gen                  (chooseAny, chooseBoundedIntegral)
+import Text.ParserCombinators.ReadPrec      (minPrec)
 
 -- External imports: Copilot
 import Copilot.Core hiding (Property)
@@ -215,6 +216,7 @@ testRunCompare =
   .&&. testRunCompare1 (arbitraryOpFloatingBool :: Gen (TestCase1 Float  Bool))
   .&&. testRunCompare1 (arbitraryOpFloatingBool :: Gen (TestCase1 Double Bool))
   .&&. testRunCompare1 (arbitraryOpStruct       :: Gen (TestCase1 MyStruct Int8))
+  .&&. testRunCompare2 (arbitraryOp2Struct      :: Gen (TestCase2 MyStruct Int8 MyStruct))
   .&&. testRunCompare2 (arbitraryArrayNum       :: Gen (TestCase2 (Array 2 Int8) Word32 Int8))
   .&&. testRunCompare2 (arbitraryArrayNum       :: Gen (TestCase2 (Array 2 Int16) Word32 Int16))
 
@@ -402,6 +404,20 @@ arbitraryStructField = elements
   , (Op1 (GetField typeOf typeOf myStruct2), fmap (unField . myStruct2))
   ]
 
+-- | Generator of functions that take and produce structs, where the returned
+-- structs have one field value updated.
+arbitraryStructUpdate :: Gen ( Fun2 MyStruct Int8 MyStruct
+                             , [MyStruct] -> [Int8] -> [MyStruct]
+                             )
+arbitraryStructUpdate = elements
+  [ ( Op2 (UpdateField typeOf typeOf myStruct1)
+    , zipWith (\s i -> s { myStruct1 = Field i })
+    )
+  , ( Op2 (UpdateField typeOf typeOf myStruct2)
+    , zipWith (\s i -> s { myStruct2 = Field i })
+    )
+  ]
+
 -- | Generator of functions on Floating point numbers.
 arbitraryOpFloat :: (Floating t, Typed t) => Gen (Fun t t, [t] -> [t])
 arbitraryOpFloat = elements
@@ -530,6 +546,19 @@ arbitraryOpStruct = oneof
         arbitraryStructField
         arbitraryStruct
     ]
+
+-- | Generator for test cases that take and produce structs, where the returned
+-- structs have one field value updated.
+arbitraryOp2Struct :: Gen (TestCase2 MyStruct Int8 MyStruct)
+arbitraryOp2Struct = oneof
+    [ mkTestCase2
+        arbitraryStructUpdate
+        arbitraryStruct
+        gen
+    ]
+  where
+   gen :: Gen Int8
+   gen = chooseBoundedIntegral (minBound, maxBound)
 
 -- * Semantics
 
@@ -1138,6 +1167,18 @@ instance DisplayableInBluespec Float where
 instance DisplayableInBluespec Double where
   displayInBluespec = hexFloatDisplay
 
+-- | @copilot-bluespec@–generated structs currently do not have @FShow@
+-- instances. (Perhaps they should: see
+-- https://github.com/Copilot-Language/copilot-bluespec/issues/12)
+-- In lieu of this, we manually define the same code that would be used in a
+-- derived @FShow@ instance.
+instance DisplayableInBluespec MyStruct where
+  displayInBluespec _ output =
+    [ "\"MyStruct { myStruct1 = %d ; myStruct2 = %d }\""
+    , output ++ ".myStruct1"
+    , output ++ ".myStruct2"
+    ]
+
 -- | Read a value of a given type in Bluespec.
 class ReadableFromBluespec a where
   readFromBluespec :: String -> a
@@ -1178,12 +1219,50 @@ instance ReadableFromBluespec Float where
 instance ReadableFromBluespec Double where
   readFromBluespec s = castWord64ToDouble $ read $ "0x" ++ s
 
+instance ReadableFromBluespec MyStruct where
+  readFromBluespec str =
+    case readsEither (readsStruct minPrec) str of
+      Left err -> error err
+      Right ms -> ms
+
+-- | Attempt to read a value of type @a@. If successful, return 'Right' with
+-- the read value. Otherwise, return @'Left' err@, where @err@ is an error
+-- message describing what went wrong.
+readsEither :: ReadS a -> String -> Either String a
+readsEither readIt s =
+  case [ x | (x,"") <- readIt s ] of
+    [x] -> Right x
+    []  -> Left $ "readsEither: no parse: " ++ s
+    _   -> Left $ "readsEither: ambiguous parse: " ++ s
+
 -- ** A simple struct definition for unit testing purposes
 
 data MyStruct = MyStruct
   { myStruct1 :: Field "myStruct1" Int8
   , myStruct2 :: Field "myStruct2" Int8
   }
+
+-- | Like a derived @Eq@ instance, except that this looks through 'Field's.
+instance Eq MyStruct where
+  MyStruct (Field f1a) (Field f2a) == MyStruct (Field f1b) (Field f2b) =
+    f1a == f1b && f2a == f2b
+instance AEq MyStruct
+
+-- | Like a derived @Read@ instance, except that this adds 'Field' wrappers as
+-- needed.
+readsStruct :: Int -> ReadS MyStruct
+readsStruct p = readParen (p > 10) $ \s -> do
+  ("MyStruct", s1) <- lex s
+  ("{", s2) <- lex s1
+  ("myStruct1", s3) <- lex s2
+  ("=", s4) <- lex s3
+  (f1, s5) <- readsPrec 0 s4
+  (";", s6) <- lex s5
+  ("myStruct2", s7) <- lex s6
+  ("=", s8) <- lex s7
+  (f2, s9) <- readsPrec 0 s8
+  ("}", s10) <- lex s9
+  pure (MyStruct (Field f1) (Field f2), s10)
 
 instance Struct MyStruct where
   typeName _ = "MyStruct"
