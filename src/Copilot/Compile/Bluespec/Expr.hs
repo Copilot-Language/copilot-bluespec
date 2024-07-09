@@ -73,7 +73,7 @@ transOp1 op e =
   case op of
     Not         -> app BS.idNot
     Abs     _ty -> app $ BS.mkId BS.NoPos "abs"
-    Sign    _ty -> app $ BS.mkId BS.NoPos "signum"
+    Sign     ty -> transSign ty e
     -- Bluespec's Arith class does not have a `recip` method corresponding to
     -- Haskell's `recip` in the `Fractional` class, so we implement it
     -- ourselves.
@@ -153,6 +153,53 @@ transOp3 :: Op3 a b c d -> BS.CExpr -> BS.CExpr -> BS.CExpr -> BS.CExpr
 transOp3 op e1 e2 e3 =
   case op of
     Mux _ -> BS.Cif BS.NoPos e1 e2 e3
+
+-- | Translate @'Sign' e@ in Copilot Core into a Bluespec expression.
+--
+-- @signum e@ is translated as:
+--
+-- @
+-- if e > 0 then 1 else (if e < 0 then negate 1 else e)
+-- @
+--
+-- That is:
+--
+-- 1. If @e@ is positive, return @1@.
+--
+-- 2. If @e@ is negative, return @-1@.
+--
+-- 3. Otherwise, return @e@. This handles the case where @e@ is @0@ when the
+--    type is an integral type. If the type is a floating-point type, it also
+--    handles the cases where @e@ is @-0@ or @NaN@.
+--
+-- This implementation is modeled after how GHC implements 'signum'
+-- <https://gitlab.haskell.org/ghc/ghc/-/blob/aed98ddaf72cc38fb570d8415cac5de9d8888818/libraries/base/GHC/Float.hs#L523-L525 here>.
+transSign :: Type a -> BS.CExpr -> BS.CExpr
+transSign ty e = positiveCase $ negativeCase e
+  where
+    -- If @e@ is positive, return @1@, otherwise fall back to the argument.
+    --
+    -- Produces the following code, where @<arg>@ is the argument to this
+    -- function:
+    -- @
+    -- if e > 0 then 1 else <arg>
+    -- @
+    positiveCase :: BS.CExpr  -- ^ Value returned if @e@ is not positive.
+                 -> BS.CExpr
+    positiveCase =
+      BS.Cif BS.NoPos (transGt ty e (constNumTy ty 0)) (constNumTy ty 1)
+
+    -- If @e@ is negative, return @1@, otherwise fall back to the argument.
+    --
+    -- Produces the following code, where @<arg>@ is the argument to this
+    -- function:
+    -- @
+    -- if e < 0 then negate 1 else <arg>
+    -- @
+    negativeCase :: BS.CExpr  -- ^ Value returned if @e@ is not negative.
+                 -> BS.CExpr
+    negativeCase =
+      BS.Cif BS.NoPos (transLt ty e (constNumTy ty 0)) (constNumTy ty (-1))
 
 -- | Translate a Copilot @x < y@ expression into Bluespec. We will generate
 -- different code depending on whether the arguments have a floating-point type
