@@ -11,13 +11,18 @@ module Test.Copilot.Compile.Bluespec
 import Control.Arrow                        ((&&&))
 import Control.Exception                    (IOException, catch)
 import Control.Monad                        (when)
+import Data.AEq                             (AEq (..))
 import Data.Bits                            (Bits, complement)
 import Data.Foldable                        (foldl')
 import Data.List                            (intercalate)
 import Data.Type.Equality                   (testEquality)
 import Data.Typeable                        (Proxy (..), (:~:) (Refl))
+import GHC.Float                            (castDoubleToWord64,
+                                             castFloatToWord32,
+                                             castWord32ToFloat,
+                                             castWord64ToDouble)
 import GHC.TypeLits                         (KnownNat, natVal)
-import Numeric.IEEE                         (nan)
+import Numeric.IEEE                         (infinity, nan)
 import System.Directory                     (doesFileExist,
                                              getTemporaryDirectory,
                                              removeDirectoryRecursive,
@@ -58,7 +63,8 @@ tests =
       , testProperty "Run and compare results"             testRunCompare
       ]
     , testGroup "Regression tests"
-      [ test15
+      [ test14
+      , test15
       ]
     ]
 
@@ -215,6 +221,21 @@ testRunCompare =
 -- * Regression tests
 
 -- | Regression tests for
+-- https://github.com/Copilot-Language/copilot-bluespec/issues/14 which ensure
+-- that @copilot-bluespec@ generates code for the @signum@ function that adheres
+-- to Copilot's @signum@ semantics.
+test14 :: Test.Framework.Test
+test14 =
+  testGroup "#14"
+    [ testProperty "`signum @Int8` generates correct Bluespec code" $
+      mkRegressionTest1 (Sign Int8) (fmap signum)
+        [-2, -1, 0, 1, 2]
+    , testProperty "`signum @Double` generates correct Bluespec code" $
+      mkRegressionTest1 (Sign Double) (fmap signum)
+        [-nan, -infinity, -2, -1, -0.0, 0, 1, 2, infinity, nan]
+    ]
+
+-- | Regression tests for
 -- https://github.com/Copilot-Language/copilot-bluespec/issues/15 which ensure
 -- that @copilot-bluespec@ generates valid code for comparison operators (('<'),
 -- ('<='), ('>'), and ('>=')) that are capable of handling NaN values.
@@ -234,12 +255,46 @@ test15 =
     vals :: [(Double, Double)]
     vals = [(0, nan), (nan, 0)]
 
+-- | Test the behavior of a unary operation (an @'Op1' a b@ value) against its
+-- expected behavior (as a Haskell function of type @[a] -> [b]@) using the
+-- supplied inputs (of type @[a]@). This function is intended to be used to
+-- construct regression tests.
+mkRegressionTest1 :: (Typed a, Typed b,
+                      DisplayableInBluespec b, ReadableFromBluespec b, AEq b)
+                  => Op1 a b
+                  -> ([a] -> [b])
+                  -> [a]
+                  -> Property
+mkRegressionTest1 op haskellFun vals =
+    let spec = alwaysTriggerArg1 (UExpr t2 appliedOp)
+        appliedOp = Op1 op (ExternVar t1 varName Nothing)
+
+        len = length vals
+        inputs  = filterOutUnusedExts
+                    spec
+                    [ (typeBluespec t1,
+                       fmap (bluespecShow t1) vals,
+                       varName)
+                    ]
+        outputs = haskellFun vals in
+
+    once $
+    testRunCompareArg
+      inputs len outputs spec (typeBluespec t2)
+
+  where
+
+    t1 = typeOf
+    t2 = typeOf
+
+    varName = "input"
+
 -- | Test the behavior of a binary operation (an @'Op2' a b c@ value) against
 -- its expected behavior (as a Haskell function of type @[a] -> [b] -> [c]@)
 -- using the supplied inputs (of type @[(a, b)]@). This function is intended to
 -- be used to construct regression tests.
 mkRegressionTest2 :: (Typed a, Typed b, Typed c,
-                      Eq c, ReadableFromBluespec c)
+                      DisplayableInBluespec c, ReadableFromBluespec c, AEq c)
                   => Op2 a b c
                   -> ([a] -> [b] -> [c])
                   -> [(a, b)]
@@ -619,7 +674,9 @@ mkTestCase2 genO genA genB = do
     varName2 = "input2"
 
 -- | Test running a compiled Bluespec program and comparing the results.
-testRunCompare1 :: (Show a, Typed a, ReadableFromBluespec b, Eq b, Typed b)
+testRunCompare1 :: (Show a, Typed a,
+                    DisplayableInBluespec b, ReadableFromBluespec b,
+                    AEq b, Typed b)
                 => Gen (TestCase1 a b) -> Property
 testRunCompare1 ops =
   forAllBlind ops $ \testCase ->
@@ -633,22 +690,23 @@ testRunCompare1 ops =
 
     in forAll (getPositive <$> arbitrary) $ \len ->
 
-         forAll (vectorOf len gen) $ \nums -> do
+         forAll (vectorOf len gen) $ \vals -> do
 
          let inputs  = filterOutUnusedExts
                          copilotSpec
                          [ (typeBluespec bluespecTypeInput,
-                            fmap (bluespecShow bluespecTypeInput) nums,
+                            fmap (bluespecShow bluespecTypeInput) vals,
                             bluespecInputName)
                          ]
-             outputs = haskellFun nums
+             outputs = haskellFun vals
 
          testRunCompareArg
            inputs len outputs copilotSpec (typeBluespec outputType)
 
 -- | Test running a compiled Bluespec program and comparing the results.
 testRunCompare2 :: (Show a1, Typed a1, Show a2, Typed a2,
-                    ReadableFromBluespec b, Eq b, Typed b)
+                    DisplayableInBluespec b, ReadableFromBluespec b,
+                    AEq b, Typed b)
                 => Gen (TestCase2 a1 a2 b) -> Property
 testRunCompare2 ops =
   forAllBlind ops $ \testCase ->
@@ -665,18 +723,18 @@ testRunCompare2 ops =
         (bluespecTypeInput2, bluespecInputName2, gen2) = inputVar2
 
     in forAll (getPositive <$> arbitrary) $ \len ->
-       forAll (vectorOf len gen1) $ \nums1 ->
-       forAll (vectorOf len gen2) $ \nums2 -> do
+       forAll (vectorOf len gen1) $ \vals1 ->
+       forAll (vectorOf len gen2) $ \vals2 -> do
          let inputs  = filterOutUnusedExts
                          copilotSpec
                          [ (typeBluespec bluespecTypeInput1,
-                            fmap (bluespecShow bluespecTypeInput1) nums1,
+                            fmap (bluespecShow bluespecTypeInput1) vals1,
                             bluespecInputName1)
                          , (typeBluespec bluespecTypeInput2,
-                            fmap (bluespecShow bluespecTypeInput2) nums2,
+                            fmap (bluespecShow bluespecTypeInput2) vals2,
                             bluespecInputName2)
                          ]
-             outputs = haskellFun nums1 nums2
+             outputs = haskellFun vals1 vals2
 
          testRunCompareArg
            inputs len outputs copilotSpec (typeBluespec outputType)
@@ -690,14 +748,15 @@ testRunCompare2 ops =
 --
 -- PRE: the monitoring code this is linked against uses the function
 -- @printBack@ with exactly one argument to pass the results.
-testRunCompareArg :: (ReadableFromBluespec b, Eq b)
+testRunCompareArg :: forall b
+                   . (DisplayableInBluespec b, ReadableFromBluespec b, AEq b)
                   => [(String, [String], String)]
                   -> Int
                   -> [b]
                   -> Spec
                   -> String
                   -> Property
-testRunCompareArg inputs numInputs nums spec outputType =
+testRunCompareArg inputs numInputs vals spec outputType =
   ioProperty $ do
     tmpDir <- getTemporaryDirectory
     setCurrentDirectory tmpDir
@@ -708,7 +767,7 @@ testRunCompareArg inputs numInputs nums spec outputType =
 
     -- Produce wrapper program
     let bluespecProgram =
-          testRunCompareArgBluespecProgram inputs outputType
+          testRunCompareArgBluespecProgram (Proxy :: Proxy b) inputs outputType
     writeFile "Top.bs" bluespecProgram
 
     -- Produce copilot monitoring code
@@ -724,10 +783,14 @@ testRunCompareArg inputs numInputs nums spec outputType =
     print testDir
     -}
 
-    -- Run program and compare result
+    -- Run the program and compare the results. Note that we use (===) (using
+    -- the `AEq` class from the `ieee754` package) rather than (==) (using the
+    -- `Eq` class), as the former allows us to use exact equality comparisons
+    -- for floating-point types. This lets us ensure that we are handling NaN
+    -- and -0.0 values correctly.
     out <- readProcess "./mkTop" ["-m", show (numInputs + 2)] ""
     let outNums = readFromBluespec <$> lines out
-        comparison = outNums == nums
+        comparison = outNums === vals
 
     -- Only clean up if the test succeeded; otherwise, we want to inspect it.
     when comparison $ do
@@ -741,10 +804,12 @@ testRunCompareArg inputs numInputs nums spec outputType =
 -- updating external stream registers on every cycle, running the monitors, and
 -- publishing the results of any outputs.
 testRunCompareArgBluespecProgram
-  :: [(String, [String], String)]
+  :: DisplayableInBluespec b
+  => Proxy b
+  -> [(String, [String], String)]
   -> String
   -> String
-testRunCompareArgBluespecProgram inputs outputType = unlines $
+testRunCompareArgBluespecProgram proxy inputs outputType = unlines $
     [ "package Top where"
     , ""
     , "import FloatingPoint"
@@ -766,8 +831,8 @@ testRunCompareArgBluespecProgram inputs outputType = unlines $
     , "    ready :: Reg Bool <- mkReg False"
     , "    interface"
     , "      printBack :: " ++ outputType ++ " -> Action"
-    , "      printBack num = $display (fshow num)"
-    , "                      when ready"
+    , "      printBack output = $display " ++ printBackDisplayArgs
+    , "                         when ready"
     , ""
     ]
     ++ inputMethods ++
@@ -783,6 +848,9 @@ testRunCompareArgBluespecProgram inputs outputType = unlines $
     , "mkTop = mkCopilotTest copilotTestIfc"
     ]
   where
+    printBackDisplayArgs :: String
+    printBackDisplayArgs = unwords (displayInBluespec proxy "output")
+
     inputVecDecls :: [String]
     inputVecDecls =
       concatMap
@@ -943,8 +1011,8 @@ bluespecShow Word8      x = bluespecShowIntegral x
 bluespecShow Word16     x = bluespecShowIntegral x
 bluespecShow Word32     x = bluespecShowIntegral x
 bluespecShow Word64     x = bluespecShowIntegral x
-bluespecShow Float      x = bluespecShowRealFloat x
-bluespecShow Double     x = bluespecShowRealFloat x
+bluespecShow Float      x = bluespecShowRealFloat 32 castFloatToWord32 x
+bluespecShow Double     x = bluespecShowRealFloat 64 castDoubleToWord64 x
 bluespecShow (Array tE) x = genVector $ map (bluespecShow tE) $ arrayElems x
 bluespecShow (Struct s) x =
   typeName s
@@ -974,14 +1042,38 @@ bluespecShowIntegral x
 -- | Show a value of a floating-point type (e.g., 'Float' or 'Double'). We make
 -- sure to convert NaN and infinity values to the corresponding Bluespec
 -- @FloatingPoint@ functions that construct these values.
-bluespecShowRealFloat :: (Num a, Ord a, RealFloat a, Show a) => a -> String
-bluespecShowRealFloat x
-  | isNaN x      = "qnan"
-  | isInfinite x = "infinity " ++ show isNeg
-  | isNeg        = "negate " ++ show x
-  | otherwise    = show x
+bluespecShowRealFloat ::
+     (Num float, Ord float, RealFloat float, Show float, Show word)
+  => Int
+  -> (float -> word)
+  -> float
+  -> String
+bluespecShowRealFloat floatSizeInBits castFloatToWord float
+    -- We want to ensure that NaN values are correctly translated to Bluespec,
+    -- bit by bit. We have two mechanisms to do so. On the Haskell side, we have
+    -- `ieee754`'s `nanWithPayload` function, and on the Bluespec side, we have
+    -- `FloatingPoint`'s `nanQuiet` function. Unfortunately, their arguments are
+    -- of different types, and it isn't quite clear how to express one function
+    -- in terms of the other.
+    --
+    -- To avoid this problem, we take a more indirect approach: we first cast
+    -- the Haskell floating-point value to a word and then `unpack` the word to
+    -- a floating-point value on the Bluespec side. It's somewhat verbose, but
+    -- it gets the job done reliably.
+  | isNaN float
+  = "unpack (" ++ show (castFloatToWord float) ++
+    " :: Bit " ++ show floatSizeInBits ++ ")"
+
+  | isInfinite float
+  = "infinity " ++ show floatIsNeg
+
+  | floatIsNeg
+  = "negate " ++ show (abs float)
+
+  | otherwise
+  = show float
   where
-    isNeg = x < 0
+    floatIsNeg = (float < 0) || isNegativeZero float
 
 -- | Given a list of elements as arguments, show a @Vector@ expression. For
 -- example, @'genVector' [\"27\", \"42\"]@ will return
@@ -994,6 +1086,57 @@ genVector vals =
       (i+1, "update (" ++ v ++ ") " ++ show i ++ " (" ++ x ++ ")"))
     (0 :: Int, "newVector")
     vals
+
+-- | Display a value of a given type in Bluespec using @$display@.
+class DisplayableInBluespec a where
+  displayInBluespec ::
+       proxy a  -- ^ The type of the value.
+    -> String   -- ^ The name of the Bluespec variable.
+    -> [String] -- ^ All arguments that are passed to @$display@.
+
+-- | Most Bluespec types can be displayed using @fshow@.
+fshowDisplay :: proxy a -> String -> [String]
+fshowDisplay _ output = ["(fshow " ++ output ++ ")"]
+
+-- | We display floating-point numbers by converting them to an integer and
+-- printing them in hexadecimal (using the @%x@ modifier). This somewhat unusual
+-- choice is motivated by the fact that this output is easier to parse than the
+-- @fshow@ output.
+hexFloatDisplay :: proxy a -> String -> [String]
+hexFloatDisplay _ output = ["\"%x\"", output]
+
+instance DisplayableInBluespec Bool where
+  displayInBluespec = fshowDisplay
+
+instance DisplayableInBluespec Int8 where
+  displayInBluespec = fshowDisplay
+
+instance DisplayableInBluespec Int16 where
+  displayInBluespec = fshowDisplay
+
+instance DisplayableInBluespec Int32 where
+  displayInBluespec = fshowDisplay
+
+instance DisplayableInBluespec Int64 where
+  displayInBluespec = fshowDisplay
+
+instance DisplayableInBluespec Word8 where
+  displayInBluespec = fshowDisplay
+
+instance DisplayableInBluespec Word16 where
+  displayInBluespec = fshowDisplay
+
+instance DisplayableInBluespec Word32 where
+  displayInBluespec = fshowDisplay
+
+instance DisplayableInBluespec Word64 where
+  displayInBluespec = fshowDisplay
+
+instance DisplayableInBluespec Float where
+  displayInBluespec = hexFloatDisplay
+
+instance DisplayableInBluespec Double where
+  displayInBluespec = hexFloatDisplay
 
 -- | Read a value of a given type in Bluespec.
 class ReadableFromBluespec a where
@@ -1025,6 +1168,15 @@ instance ReadableFromBluespec Word32 where
 
 instance ReadableFromBluespec Word64 where
   readFromBluespec = read
+
+-- We print out floating-point values in hexadecimal (see `hexFloatDisplay`
+-- above), so we parse them accordingly here.
+
+instance ReadableFromBluespec Float where
+  readFromBluespec s = castWord32ToFloat $ read $ "0x" ++ s
+
+instance ReadableFromBluespec Double where
+  readFromBluespec s = castWord64ToDouble $ read $ "0x" ++ s
 
 -- ** A simple struct definition for unit testing purposes
 
