@@ -1,3 +1,6 @@
+2024-07-10
+        * Fix a bug in the translation of floating-point comparisons. (#15)
+
 2024-03-08
         * Version bump (3.19). (#5)
         * Create new library for Bluespec backend.
