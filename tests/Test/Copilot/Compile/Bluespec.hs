@@ -220,7 +220,7 @@ testRunCompare =
 -- ('<='), ('>'), and ('>=')) that are capable of handling NaN values.
 test15 :: Test.Framework.Test
 test15 =
-    testGroup "#15"
+  testGroup "#15"
     [ testProperty "Generates valid (<) code for NaNs" $
       mkRegressionTest2 (Lt Double) (zipWith (<)) vals
     , testProperty "Generates valid (<=) code for NaNs" $
