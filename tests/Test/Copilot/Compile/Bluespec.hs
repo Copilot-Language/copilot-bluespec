@@ -17,6 +17,7 @@ import Data.List                            (intercalate)
 import Data.Type.Equality                   (testEquality)
 import Data.Typeable                        (Proxy (..), (:~:) (Refl))
 import GHC.TypeLits                         (KnownNat, natVal)
+import Numeric.IEEE                         (nan)
 import System.Directory                     (doesFileExist,
                                              getTemporaryDirectory,
                                              removeDirectoryRecursive,
@@ -54,6 +55,9 @@ tests =
       , testProperty "Compile specification in custom dir" testCompileCustomDir
       , testProperty "Run specification"                   testRun
       , testProperty "Run and compare results"             testRunCompare
+      ]
+    , testGroup "Regression tests"
+      [ test15
       ]
     ]
 
@@ -206,6 +210,68 @@ testRunCompare =
   .&&. testRunCompare1 (arbitraryOpStruct       :: Gen (TestCase1 MyStruct Int8))
   .&&. testRunCompare2 (arbitraryArrayNum       :: Gen (TestCase2 (Array 2 Int8) Word32 Int8))
   .&&. testRunCompare2 (arbitraryArrayNum       :: Gen (TestCase2 (Array 2 Int16) Word32 Int16))
+
+-- * Regression tests
+
+-- | Regression tests for
+-- https://github.com/Copilot-Language/copilot-bluespec/issues/15 which ensure
+-- that @copilot-bluespec@ generates valid code for comparison operators (('<'),
+-- ('<='), ('>'), and ('>=')) that are capable of handling NaN values.
+test15 :: Test.Framework.Test
+test15 =
+    testGroup "#15"
+    [ testProperty "Generates valid (<) code for NaNs" $
+      mkRegressionTest2 (Lt Double) (zipWith (<)) vals
+    , testProperty "Generates valid (<=) code for NaNs" $
+      mkRegressionTest2 (Le Double) (zipWith (<=)) vals
+    , testProperty "Generates valid (>) code for NaNs" $
+      mkRegressionTest2 (Gt Double) (zipWith (>)) vals
+    , testProperty "Generates valid (>=) code for NaNs" $
+      mkRegressionTest2 (Ge Double) (zipWith (>=)) vals
+    ]
+  where
+    vals :: [(Double, Double)]
+    vals = [(0, nan), (nan, 0)]
+
+-- | Test the behavior of a binary operation (an @'Op2' a b c@ value) against
+-- its expected behavior (as a Haskell function of type @[a] -> [b] -> [c]@)
+-- using the supplied inputs (of type @[(a, b)]@). This function is intended to
+-- be used to construct regression tests.
+mkRegressionTest2 :: (Typed a, Typed b, Typed c,
+                      Eq c, ReadableFromBluespec c)
+                  => Op2 a b c
+                  -> ([a] -> [b] -> [c])
+                  -> [(a, b)]
+                  -> Property
+mkRegressionTest2 op haskellFun vals =
+    let spec = alwaysTriggerArg1 (UExpr t3 appliedOp)
+        appliedOp = Op2 op (ExternVar t1 varName1 Nothing)
+                           (ExternVar t2 varName2 Nothing)
+
+        len = length vals
+        (vals1, vals2) = unzip vals
+        inputs  = filterOutUnusedExts
+                    spec
+                    [ (typeBluespec t1,
+                       fmap (bluespecShow t1) vals1,
+                       varName1)
+                    , (typeBluespec t2,
+                       fmap (bluespecShow t2) vals2,
+                       varName2)
+                    ]
+        outputs = haskellFun vals1 vals2 in
+
+    testRunCompareArg
+      inputs len outputs spec (typeBluespec t3)
+
+  where
+
+    t1 = typeOf
+    t2 = typeOf
+    t3 = typeOf
+
+    varName1 = "input1"
+    varName2 = "input2"
 
 -- * Random generators
 
@@ -875,8 +941,8 @@ bluespecShow Word8      x = bluespecShowIntegral x
 bluespecShow Word16     x = bluespecShowIntegral x
 bluespecShow Word32     x = bluespecShowIntegral x
 bluespecShow Word64     x = bluespecShowIntegral x
-bluespecShow Float      x = bluespecShowRealFrac x
-bluespecShow Double     x = bluespecShowRealFrac x
+bluespecShow Float      x = bluespecShowRealFloat x
+bluespecShow Double     x = bluespecShowRealFloat x
 bluespecShow (Array tE) x = genVector $ map (bluespecShow tE) $ arrayElems x
 bluespecShow (Struct s) x =
   typeName s
@@ -903,11 +969,17 @@ bluespecShowIntegral x
   -- Integer. This way, `negate` can turn `128` to `-128` without issues.
   | otherwise = "fromInteger (negate " ++ show (abs (toInteger x)) ++ ")"
 
--- | Show a value of a fractional type (e.g., 'Float' or 'Double').
-bluespecShowRealFrac :: (Num a, Ord a, Show a) => a -> String
-bluespecShowRealFrac x
-  | x >= 0    = show x
-  | otherwise = "negate " ++ show x
+-- | Show a value of a floating-point type (e.g., 'Float' or 'Double'). We make
+-- sure to convert NaN and infinity values to the corresponding Bluespec
+-- @FloatingPoint@ functions that construct these values.
+bluespecShowRealFloat :: (Num a, Ord a, RealFloat a, Show a) => a -> String
+bluespecShowRealFloat x
+  | isNaN x      = "qnan"
+  | isInfinite x = "infinity " ++ show isNeg
+  | isNeg        = "negate " ++ show x
+  | otherwise    = show x
+  where
+    isNeg = x < 0
 
 -- | Given a list of elements as arguments, show a @Vector@ expression. For
 -- example, @'genVector' [\"27\", \"42\"]@ will return
