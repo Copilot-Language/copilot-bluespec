@@ -1,4 +1,5 @@
-2024-07-10
+2024-07-11
+        * Fix a bug in the translation of the signum function. (#14)
         * Fix a bug in the translation of floating-point comparisons. (#15)
 
 2024-03-08
