@@ -31,8 +31,9 @@ import Test.Framework.Providers.QuickCheck2 (testProperty)
 import Test.QuickCheck                      (Arbitrary, Gen, Property,
                                              arbitrary, choose, elements,
                                              forAll, forAllBlind, frequency,
-                                             getPositive, ioProperty, oneof,
-                                             vectorOf, withMaxSuccess, (.&&.))
+                                             getPositive, ioProperty, once,
+                                             oneof, vectorOf, withMaxSuccess,
+                                             (.&&.))
 import Test.QuickCheck.Gen                  (chooseAny, chooseBoundedIntegral)
 
 -- External imports: Copilot
@@ -65,7 +66,7 @@ tests =
 
 -- | Test compiling a spec.
 testCompile :: Property
-testCompile = ioProperty $ do
+testCompile = once $ ioProperty $ do
     tmpDir <- getTemporaryDirectory
     setCurrentDirectory tmpDir
 
@@ -97,7 +98,7 @@ testCompile = ioProperty $ do
 
 -- | Test compiling a spec in a custom directory.
 testCompileCustomDir :: Property
-testCompileCustomDir = ioProperty $ do
+testCompileCustomDir = once $ ioProperty $ do
     tmpDir <- getTemporaryDirectory
     setCurrentDirectory tmpDir
 
@@ -135,7 +136,7 @@ testCompileCustomDir = ioProperty $ do
 --
 -- The actual behavior is ignored.
 testRun :: Property
-testRun = ioProperty $ do
+testRun = once $ ioProperty $ do
     tmpDir <- getTemporaryDirectory
     setCurrentDirectory tmpDir
 
@@ -261,6 +262,7 @@ mkRegressionTest2 op haskellFun vals =
                     ]
         outputs = haskellFun vals1 vals2 in
 
+    once $
     testRunCompareArg
       inputs len outputs spec (typeBluespec t3)
 
