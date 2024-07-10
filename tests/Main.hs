@@ -7,11 +7,11 @@ import Test.Framework (Test, defaultMain)
 -- Internal library modules being tested
 import qualified Test.Copilot.Compile.Bluespec
 
--- | Run all unit tests on copilot-bluespec.
+-- | Run all @copilot-bluespec@ tests.
 main :: IO ()
 main = defaultMain tests
 
--- | All unit tests in copilot-bluespec.
+-- | All @copilot-bluespec@ tests.
 tests :: [Test.Framework.Test]
 tests =
   [ Test.Copilot.Compile.Bluespec.tests
