@@ -58,7 +58,7 @@ library
                           , Copilot.Compile.Bluespec.Settings
                           , Copilot.Compile.Bluespec.Type
 
-test-suite unit-tests
+test-suite tests
   type:
     exitcode-stdio-1.0
 

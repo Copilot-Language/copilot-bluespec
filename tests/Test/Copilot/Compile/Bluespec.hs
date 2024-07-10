@@ -45,14 +45,16 @@ import Copilot.Compile.Bluespec.External (External (extName), gatherExts)
 
 -- * Constants
 
--- | All unit tests for copilot-bluespec:Copilot.Compile.Bluespec.
+-- | All tests for copilot-bluespec:Copilot.Compile.Bluespec.
 tests :: Test.Framework.Test
 tests =
   testGroup "Copilot.Compile.Bluespec"
-    [ testProperty "Compile specification"               testCompile
-    , testProperty "Compile specification in custom dir" testCompileCustomDir
-    , testProperty "Run specification"                   testRun
-    , testProperty "Run and compare results"             testRunCompare
+    [ testGroup "Unit tests"
+      [ testProperty "Compile specification"               testCompile
+      , testProperty "Compile specification in custom dir" testCompileCustomDir
+      , testProperty "Run specification"                   testRun
+      , testProperty "Run and compare results"             testRunCompare
+      ]
     ]
 
 -- * Individual tests
