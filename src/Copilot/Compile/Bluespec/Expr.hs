@@ -128,10 +128,10 @@ transOp2 op e1 e2 =
     Fdiv     _ty -> app $ BS.idSlashAt BS.NoPos
     Eq       _   -> app BS.idEqual
     Ne       _   -> app BS.idNotEqual
-    Le       _   -> app $ BS.idLtEqAt BS.NoPos
-    Ge       _   -> app $ BS.idGtEqAt BS.NoPos
-    Lt       _   -> app $ BS.idLtAt BS.NoPos
-    Gt       _   -> app $ BS.idGtAt BS.NoPos
+    Le       ty  -> transLe ty e1 e2
+    Ge       ty  -> transGe ty e1 e2
+    Lt       ty  -> transLt ty e1 e2
+    Gt       ty  -> transGt ty e1 e2
     BwAnd    _   -> app $ BS.idBitAndAt BS.NoPos
     BwOr     _   -> app $ BS.idBitOrAt BS.NoPos
     BwXor    _   -> app $ BS.idCaretAt BS.NoPos
@@ -153,6 +153,138 @@ transOp3 :: Op3 a b c d -> BS.CExpr -> BS.CExpr -> BS.CExpr -> BS.CExpr
 transOp3 op e1 e2 e3 =
   case op of
     Mux _ -> BS.Cif BS.NoPos e1 e2 e3
+
+-- | Translate a Copilot @x < y@ expression into Bluespec. We will generate
+-- different code depending on whether the arguments have a floating-point type
+-- or not.
+transLt :: Type a
+        -- ^ The type of the arguments.
+        -> BS.CExpr -> BS.CExpr -> BS.CExpr
+transLt ty e1 e2
+  | typeIsFloating ty
+  = transLtOrGtFP (BS.mkId BS.NoPos "LT") e1 e2
+  | otherwise
+  = BS.CApply (BS.CVar (BS.idLtAt BS.NoPos)) [e1, e2]
+
+-- | Translate a Copilot @x > y@ expression into Bluespec. We will generate
+-- different code depending on whether the arguments have a floating-point type
+-- or not.
+transGt :: Type a
+        -- ^ The type of the arguments.
+        -> BS.CExpr -> BS.CExpr -> BS.CExpr
+transGt ty e1 e2
+  | typeIsFloating ty
+  = transLtOrGtFP (BS.mkId BS.NoPos "GT") e1 e2
+  | otherwise
+  = BS.CApply (BS.CVar (BS.idGtAt BS.NoPos)) [e1, e2]
+
+-- | Translate a Copilot @x <= y@ expression into Bluespec. We will generate
+-- different code depending on whether the arguments have a floating-point type
+-- or not.
+transLe :: Type a
+        -- ^ The type of the arguments.
+        -> BS.CExpr -> BS.CExpr -> BS.CExpr
+transLe ty e1 e2
+  | typeIsFloating ty
+  = transLeOrGeFP (BS.mkId BS.NoPos "LT") e1 e2
+  | otherwise
+  = BS.CApply (BS.CVar (BS.idLtEqAt BS.NoPos)) [e1, e2]
+
+-- | Translate a Copilot @x >= y@ expression into Bluespec. We will generate
+-- different code depending on whether the arguments have a floating-point type
+-- or not.
+transGe :: Type a
+        -- ^ The type of the arguments.
+        -> BS.CExpr -> BS.CExpr -> BS.CExpr
+transGe ty e1 e2
+  | typeIsFloating ty
+  = transLeOrGeFP (BS.mkId BS.NoPos "GT") e1 e2
+  | otherwise
+  = BS.CApply (BS.CVar (BS.idGtEqAt BS.NoPos)) [e1, e2]
+
+-- | Translate a Copilot floating-point comparison involving @<@ or @>@ into a
+-- Bluespec expression. Specifically, @x < y@ is translated to:
+--
+-- @
+-- compareFP x y == LT
+-- @
+--
+-- @x > y@ is translated similarly, except that @GT@ is used instead of @LT@.
+--
+-- See the comments on 'compareFPExpr' for why we translate floating-point
+-- comparison operators this way.
+transLtOrGtFP :: BS.Id
+                 -- ^ A @Disorder@ label, which we check against the result of
+                 -- calling @compareFP@. This should be either @LT@ or @GT@.
+              -> BS.CExpr -> BS.CExpr -> BS.CExpr
+transLtOrGtFP disorderLabel e1 e2 =
+  BS.CApply
+    (BS.CVar BS.idEqual)
+    [compareFPExpr e1 e2, BS.CCon disorderLabel []]
+
+-- | Translate a Copilot floating-point comparison involving @<=@ or @>=@ into
+-- a Bluespec expression. Specifically, @x <= y@ is translated to:
+--
+-- @
+-- let _c = compareFP x y
+-- in (_c == LT) || (_c == EQ)
+-- @
+--
+-- @x >= y@ is translated similarly, except that @GT@ is used instead of @LT@.
+--
+-- See the comments on 'compareFPExpr' for why we translate floating-point
+-- comparison operators this way.
+transLeOrGeFP :: BS.Id
+                 -- ^ A @Disorder@ label, which we check against the result of
+                 -- calling @compareFP@. This should be either @LT@ or @GT@.
+              -> BS.CExpr -> BS.CExpr -> BS.CExpr
+transLeOrGeFP disorderLabel e1 e2 =
+  BS.Cletrec
+    [BS.CLValue c [BS.CClause [] [] (compareFPExpr e1 e2)] []]
+    (BS.CApply
+      (BS.CVar (BS.idOrAt BS.NoPos))
+      [ BS.CApply
+          (BS.CVar BS.idEqual)
+          [BS.CVar c, BS.CCon disorderLabel []]
+      , BS.CApply
+          (BS.CVar BS.idEqual)
+          [BS.CVar c, BS.CCon (BS.mkId BS.NoPos "EQ") []]
+      ])
+  where
+    c = BS.mkId BS.NoPos "_c"
+
+-- | Generate an expression of the form @compareFP x y@. This is used to power
+-- the translations of the Copilot @<@, @<=@, @>@, and @>=@ floating-point
+-- operators to Bluespec.
+--
+-- Translating these operators using @compareFP@ is a somewhat curious design
+-- choice, given that Bluespec already defines its own versions of these
+-- operators. Unfortunately, we cannot directly use the Bluespec versions of
+-- these operators, as they are defined in such a way that they will call
+-- @error@ when one of the arguments is a NaN value. This would pose two
+-- problems:
+--
+-- 1. This would differ from the semantics of Copilot, where @x < y@ will return
+--    @False@ (instead of erroring) when one of the arguments is NaN. (Similarly
+--    for the other floating-point comparison operators.)
+--
+-- 2. Moreover, if you have a Bluespec program that calls @x < y@, where the
+--    value of @x@ or @y@ is derived from a register, then @bsc@ will always
+--    fail to compile the code. This is because Bluespec must generate hardware
+--    for all possible code paths in @<@, and because one of the code paths
+--    calls @error@, this will cause compilation to result in an error. (See
+--    https://github.com/B-Lang-org/bsc/discussions/711#discussioncomment-10003586
+--    for a more detailed explanation.)
+--
+-- As such, we avoid using Bluespec's comparison operators and instead translate
+-- Copilot's comparison operators to expressions derived from @compareFP@.
+-- Unlike Bluespec's other comparison operators, calling @compareFP@ will never
+-- result in an error.
+compareFPExpr :: BS.CExpr -> BS.CExpr -> BS.CExpr
+compareFPExpr e1 e2 =
+  BS.CApply
+    (BS.CVar (BS.mkId BS.NoPos "compareFP"))
+    [e1, e2]
 
 -- | Bluespec does not have a general-purpose casting operation, so we must
 -- handle casts on a case-by-case basis.
@@ -450,6 +582,12 @@ cIndexVector vec idx =
 -- to prevent expressions from having ambiguous types in certain situations.
 withTypeAnnotation :: Type a -> BS.CExpr -> BS.CExpr
 withTypeAnnotation ty e = e `BS.CHasType` BS.CQType [] (transType ty)
+
+-- | True if the type given is a floating point number.
+typeIsFloating :: Type a -> Bool
+typeIsFloating Float  = True
+typeIsFloating Double = True
+typeIsFloating _      = False
 
 -- | Throw an error if attempting to use a floating-point operation that
 -- Bluespec does not currently support.
