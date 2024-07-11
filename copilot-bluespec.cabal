@@ -1,6 +1,6 @@
 cabal-version             : >= 1.10
 name                      : copilot-bluespec
-version                   : 3.19
+version                   : 3.20
 synopsis                  : A compiler for Copilot targeting FPGAs.
 description               :
   This package is a back-end from Copilot to FPGAs in Bluespec.
