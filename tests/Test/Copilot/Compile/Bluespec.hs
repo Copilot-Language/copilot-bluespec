@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 -- | Test copilot-bluespec:Copilot.Compile.Bluespec.
 module Test.Copilot.Compile.Bluespec
     ( tests )
@@ -14,7 +15,8 @@ import Control.Monad                        (when)
 import Data.AEq                             (AEq (..))
 import Data.Bits                            (Bits, complement)
 import Data.Foldable                        (foldl')
-import Data.List                            (intercalate)
+import Data.List                            (intercalate, stripPrefix)
+import Data.List.Extra                      (stripSuffix)
 import Data.Type.Equality                   (testEquality)
 import Data.Typeable                        (Proxy (..), (:~:) (Refl))
 import GHC.Float                            (castDoubleToWord64,
@@ -217,8 +219,9 @@ testRunCompare =
   .&&. testRunCompare1 (arbitraryOpFloatingBool :: Gen (TestCase1 Double Bool))
   .&&. testRunCompare1 (arbitraryOpStruct       :: Gen (TestCase1 MyStruct Int8))
   .&&. testRunCompare2 (arbitraryOp2Struct      :: Gen (TestCase2 MyStruct Int8 MyStruct))
-  .&&. testRunCompare2 (arbitraryArrayNum       :: Gen (TestCase2 (Array 2 Int8) Word32 Int8))
-  .&&. testRunCompare2 (arbitraryArrayNum       :: Gen (TestCase2 (Array 2 Int16) Word32 Int16))
+  .&&. testRunCompare2 (arbitraryArray2Num      :: Gen (TestCase2 (Array 2 Int8) Word32 Int8))
+  .&&. testRunCompare2 (arbitraryArray2Num      :: Gen (TestCase2 (Array 2 Int16) Word32 Int16))
+  .&&. testRunCompare3 (arbitraryArray3Num      :: Gen (TestCase3 (Array 2 Int16) Word32 Int16 (Array 2 Int16)))
 
 -- * Regression tests
 
@@ -395,6 +398,20 @@ arbitraryArrayIx :: forall t n . (Typed t, KnownNat n, Num t)
 arbitraryArrayIx = return
   (Op2 (Index typeOf), zipWith (\x y -> arrayElems x !! fromIntegral y))
 
+-- | Generator of functions that take arrays, indices, and values, and then
+-- produce new arrays by updating the elements at the indices with the values.
+arbitraryArrayUpdate :: forall t n . (Typed t, KnownNat n, Num t)
+                     => Gen ( Fun3 (Array n t) Word32 t (Array n t)
+                            , [Array n t] -> [Word32] -> [t] -> [Array n t]
+                            )
+arbitraryArrayUpdate = return
+  (Op3 (UpdateArray typeOf), zipWith3 (\x y z -> array (updateAt y z (arrayElems x))))
+  where
+    updateAt :: forall a. Word32 -> a -> [a] -> [a]
+    updateAt _ _ [] = []
+    updateAt 0 x (_ : as) = x : as
+    updateAt n x (a : as) = a : updateAt (n-1) x as
+
 -- | Generator of functions that take structs produce fields of the struct.
 arbitraryStructField :: Gen ( Fun MyStruct Int8
                             , [MyStruct] -> [Int8]
@@ -526,11 +543,25 @@ arbitraryOpFloatingBool = oneof
 
 -- | Generator for test cases on Arrays selection producing values of the
 -- array.
-arbitraryArrayNum :: forall n a
+arbitraryArray2Num :: forall n a
                   .  (KnownNat n, Num a, Random a, Typed a)
                   => Gen (TestCase2 (Array n a) Word32 a)
-arbitraryArrayNum = oneof
+arbitraryArray2Num = oneof
     [ mkTestCase2 arbitraryArrayIx arbitraryArray gen
+    ]
+  where
+   gen :: Gen Word32
+   gen = choose (0, len - 1)
+
+   len :: Word32
+   len = fromIntegral $ natVal (Proxy :: Proxy n)
+
+-- | Generator for test cases on Arrays which update values of the array.
+arbitraryArray3Num :: forall n a
+                   .  (KnownNat n, Num a, Random a, Typed a)
+                   => Gen (TestCase3 (Array n a) Word32 a (Array n a))
+arbitraryArray3Num = oneof
+    [ mkTestCase3 arbitraryArrayUpdate arbitraryArray gen chooseAny
     ]
   where
    gen :: Gen Word32
@@ -570,6 +601,9 @@ type Fun a b = Expr a -> Expr b
 -- | Binary Copilot function.
 type Fun2 a b c = Expr a -> Expr b -> Expr c
 
+-- | Ternary Copilot function.
+type Fun3 a b c d = Expr a -> Expr b -> Expr c -> Expr d
+
 -- | Compose functions, paired with the Haskell functions that define their
 -- idealized meaning.
 funCompose1 :: (Fun b c, [b] -> [c])
@@ -590,8 +624,7 @@ funCompose2 (f1, g1) (f2, g2) (f3, g3) =
 -- | Test case specification for specs with one input variable and one output.
 data TestCase1 a b = TestCase1
   { wrapTC1Expr :: Spec
-    -- ^ Specification containing a trigger an extern of type 'a' and a trigger
-    -- with an argument of type 'b'.
+    -- ^ Specification containing a trigger with an extern of type 'a'.
 
   , wrapTC1Fun :: [a] -> [b]
     -- ^ Function expected to function in the same way as the Spec being
@@ -614,8 +647,8 @@ data TestCase1 a b = TestCase1
 -- | Test case specification for specs with two input variables and one output.
 data TestCase2 a b c = TestCase2
   { wrapTC2Expr :: Spec
-    -- ^ Specification containing a trigger an extern of type 'a' and a trigger
-    -- with an argument of type 'b'.
+    -- ^ Specification containing a trigger with an extern of type 'a' and a
+    -- trigger with an argument of type 'b'.
 
   , wrapTC2Fun :: [a] -> [b] -> [c]
     -- ^ Function expected to function in the same way as the Spec being
@@ -642,6 +675,51 @@ data TestCase2 a b c = TestCase2
     -- type.
 
   , wrapTC2CopOut :: Type c
+    -- ^ The type of the output in Bluespec.
+  }
+
+-- | Test case specification for specs with three input variables and one output.
+data TestCase3 a b c d = TestCase3
+  { wrapTC3Expr :: Spec
+    -- ^ Specification containing a trigger with an extern of type 'a', a
+    -- trigger with an argument of type 'b', and a trigger with an argument of
+    -- type 'c'.
+
+  , wrapTC3Fun :: [a] -> [b] -> [c] -> [d]
+    -- ^ Function expected to function in the same way as the Spec being
+    -- tested.
+
+  , wrapTC3CopInp1 :: (Type a, String, Gen a)
+    -- ^ Input specification for the first input.
+    --
+    -- - The first element contains the type of the input in Bluespec.
+    --
+    -- - The second contains the variable name in Bluespec.
+    --
+    -- - The latter contains a randomized generator for values of the given
+    -- type.
+
+  , wrapTC3CopInp2 :: (Type b, String, Gen b)
+    -- ^ Input specification for the second input.
+    --
+    -- - The first element contains the type of the input in Bluespec.
+    --
+    -- - The second contains the variable name in Bluespec.
+    --
+    -- - The latter contains a randomized generator for values of the given
+    -- type.
+
+  , wrapTC3CopInp3 :: (Type c, String, Gen c)
+    -- ^ Input specification for the second input.
+    --
+    -- - The first element contains the type of the input in Bluespec.
+    --
+    -- - The second contains the variable name in Bluespec.
+    --
+    -- - The latter contains a randomized generator for values of the given
+    -- type.
+
+  , wrapTC3CopOut :: Type d
     -- ^ The type of the output in Bluespec.
   }
 
@@ -701,6 +779,42 @@ mkTestCase2 genO genA genB = do
 
     varName1 = "input1"
     varName2 = "input2"
+
+-- | Generate test cases for expressions that behave like ternary functions.
+mkTestCase3 :: (Typed a, Typed b, Typed c, Typed d)
+            => Gen (Fun3 a b c d, [a] -> [b] -> [c] -> [d])
+            -> Gen a
+            -> Gen b
+            -> Gen c
+            -> Gen (TestCase3 a b c d)
+mkTestCase3 genO genA genB genC = do
+    (copilotF, semF) <- genO
+
+    let spec = alwaysTriggerArg1 (UExpr t4 appliedOp)
+        appliedOp = copilotF (ExternVar t1 varName1 Nothing)
+                             (ExternVar t2 varName2 Nothing)
+                             (ExternVar t3 varName3 Nothing)
+
+    return $
+      TestCase3
+        { wrapTC3Expr = spec
+        , wrapTC3Fun = semF
+        , wrapTC3CopInp1 = ( t1, varName1, genA )
+        , wrapTC3CopInp2 = ( t2, varName2, genB )
+        , wrapTC3CopInp3 = ( t3, varName3, genC )
+        , wrapTC3CopOut = t4
+        }
+
+  where
+
+    t1 = typeOf
+    t2 = typeOf
+    t3 = typeOf
+    t4 = typeOf
+
+    varName1 = "input1"
+    varName2 = "input2"
+    varName3 = "input3"
 
 -- | Test running a compiled Bluespec program and comparing the results.
 testRunCompare1 :: (Show a, Typed a,
@@ -764,6 +878,48 @@ testRunCompare2 ops =
                             bluespecInputName2)
                          ]
              outputs = haskellFun vals1 vals2
+
+         testRunCompareArg
+           inputs len outputs copilotSpec (typeBluespec outputType)
+
+-- | Test running a compiled Bluespec program and comparing the results.
+testRunCompare3 :: (Show a1, Typed a1, Show a2, Typed a2, Show a3, Typed a3,
+                    DisplayableInBluespec b, ReadableFromBluespec b,
+                    AEq b, Typed b)
+                => Gen (TestCase3 a1 a2 a3 b) -> Property
+testRunCompare3 ops =
+  forAllBlind ops $ \testCase ->
+    let (TestCase3
+           { wrapTC3Expr = copilotSpec
+           , wrapTC3Fun = haskellFun
+           , wrapTC3CopInp1 = inputVar1
+           , wrapTC3CopInp2 = inputVar2
+           , wrapTC3CopInp3 = inputVar3
+           , wrapTC3CopOut = outputType
+           }) =
+          testCase
+
+        (bluespecTypeInput1, bluespecInputName1, gen1) = inputVar1
+        (bluespecTypeInput2, bluespecInputName2, gen2) = inputVar2
+        (bluespecTypeInput3, bluespecInputName3, gen3) = inputVar3
+
+    in forAll (getPositive <$> arbitrary) $ \len ->
+       forAll (vectorOf len gen1) $ \vals1 ->
+       forAll (vectorOf len gen2) $ \vals2 ->
+       forAll (vectorOf len gen3) $ \vals3 -> do
+         let inputs  = filterOutUnusedExts
+                         copilotSpec
+                         [ (typeBluespec bluespecTypeInput1,
+                            fmap (bluespecShow bluespecTypeInput1) vals1,
+                            bluespecInputName1)
+                         , (typeBluespec bluespecTypeInput2,
+                            fmap (bluespecShow bluespecTypeInput2) vals2,
+                            bluespecInputName2)
+                         , (typeBluespec bluespecTypeInput3,
+                            fmap (bluespecShow bluespecTypeInput3) vals3,
+                            bluespecInputName3)
+                         ]
+             outputs = haskellFun vals1 vals2 vals3
 
          testRunCompareArg
            inputs len outputs copilotSpec (typeBluespec outputType)
@@ -1167,6 +1323,9 @@ instance DisplayableInBluespec Float where
 instance DisplayableInBluespec Double where
   displayInBluespec = hexFloatDisplay
 
+instance DisplayableInBluespec a => DisplayableInBluespec (Array n a) where
+  displayInBluespec = fshowDisplay
+
 -- | @copilot-bluespec@–generated structs currently do not have @FShow@
 -- instances. (Perhaps they should: see
 -- https://github.com/Copilot-Language/copilot-bluespec/issues/12)
@@ -1219,6 +1378,14 @@ instance ReadableFromBluespec Float where
 instance ReadableFromBluespec Double where
   readFromBluespec s = castWord64ToDouble $ read $ "0x" ++ s
 
+instance (KnownNat n, ReadableFromBluespec a) => ReadableFromBluespec (Array n a) where
+  readFromBluespec s0
+    | Just s1 <- stripPrefix "<V" s0
+    , Just s2 <- stripSuffix ">" s1
+    = array $ map readFromBluespec $ words s2
+    | otherwise
+    = error $ "Unexpected Vector fshow output: " ++ s0
+
 instance ReadableFromBluespec MyStruct where
   readFromBluespec str =
     case readsEither (readsStruct minPrec) str of
@@ -1234,6 +1401,14 @@ readsEither readIt s =
     [x] -> Right x
     []  -> Left $ "readsEither: no parse: " ++ s
     _   -> Left $ "readsEither: ambiguous parse: " ++ s
+
+-- ** Orphan instances for Arrays
+
+instance Eq a => Eq (Array n a) where
+  a1 == a2 = arrayElems a1 == arrayElems a2
+
+instance AEq a => AEq (Array n a) where
+  a1 === a2 = arrayElems a1 === arrayElems a2
 
 -- ** A simple struct definition for unit testing purposes
 
