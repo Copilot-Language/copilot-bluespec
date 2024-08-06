@@ -158,6 +158,7 @@ transOp3 :: Op3 a b c d -> BS.CExpr -> BS.CExpr -> BS.CExpr -> BS.CExpr
 transOp3 op e1 e2 e3 =
   case op of
     Mux _ -> BS.Cif BS.NoPos e1 e2 e3
+    UpdateArray _ -> cUpdateVector e1 e2 e3
 
 -- | Translate @'Sign' e@ in Copilot Core into a Bluespec expression.
 --
@@ -576,12 +577,10 @@ genVector f vec =
   foldl'
     (\(!i, !v) x ->
       ( i+1
-      , BS.CApply
-          (BS.CVar (BS.mkId BS.NoPos "update"))
-          [ v
-          , cLit (BS.LInt (BS.ilDec (toInteger i)))
-          , f i x
-          ]
+      , cUpdateVector
+          v
+          (cLit (BS.LInt (BS.ilDec (toInteger i))))
+          (f i x)
       ))
     (0, BS.CVar (BS.mkId BS.NoPos "newVector"))
     vec
@@ -629,6 +628,14 @@ cLit = BS.CLit . BS.CLiteral BS.NoPos
 cIndexVector :: BS.CExpr -> BS.CExpr -> BS.CExpr
 cIndexVector vec idx =
   BS.CApply (BS.CVar (BS.mkId BS.NoPos "select")) [vec, idx]
+
+-- | Create a Bluespec expression that updates a @Vector@ element at a
+-- particular index.
+cUpdateVector :: BS.CExpr -> BS.CExpr -> BS.CExpr -> BS.CExpr
+cUpdateVector vec idx newElem =
+  BS.CApply
+    (BS.CVar (BS.mkId BS.NoPos "update"))
+    [vec, idx, newElem]
 
 -- | Explicitly annotate an expression with a type signature. This is necessary
 -- to prevent expressions from having ambiguous types in certain situations.
