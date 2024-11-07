@@ -54,6 +54,7 @@ library
                           , Copilot.Compile.Bluespec.Error
                           , Copilot.Compile.Bluespec.Expr
                           , Copilot.Compile.Bluespec.External
+                          , Copilot.Compile.Bluespec.FloatingPoint
                           , Copilot.Compile.Bluespec.Name
                           , Copilot.Compile.Bluespec.Settings
                           , Copilot.Compile.Bluespec.Type

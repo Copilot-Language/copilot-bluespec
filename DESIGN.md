@@ -67,7 +67,7 @@ are:
 2. The call to `compile "Fibs" spec'` in `main`. This will compile the Copilot
    specification to a Bluespec program named `Fibs.bs`.
 
-Running this program will generate three files[^1]:
+Running this program will generate five files[^1]:
 
 [^1]: The actual code in these files is machine-generated and somewhat
 difficult to read. We have cleaned up the code slightly to make it easier to
@@ -127,6 +127,7 @@ understand.
 
   import FibsTypes
   import FibsIfc
+  import BluespecFP
 
   mkFibs :: Module FibsIfc -> Module Empty
   mkFibs ifcMod =
@@ -179,6 +180,62 @@ understand.
   the structure of a module, whereas the `ActionValue` monad describes the
   behavior of a circuit at execution time.
 
+* `BluespecFP.bsv`: A collection of floating-point operations that leverage BDPI
+  (Bluespec's foreign-function interface). We will omit the full contents of
+  this file for brevity, but it will look something like this:
+
+  ```bluespec
+  import FloatingPoint::*;
+
+  import "BDPI" function Float bs_fp_expf (Float x);
+  import "BDPI" function Double bs_fp_exp (Double x);
+  import "BDPI" function Float bs_fp_logf (Float x);
+  import "BDPI" function Double bs_fp_log (Double x);
+  ...
+  ```
+
+  For more information on what this file does, see the "Floating-point numbers"
+  section below.
+
+* `bs_fp.c`: A collection of floating-point operations implemented in C. These
+  functions are imported via BDPI in `BluespecFP.bsv`. We will omit the full
+  contents of this file for brevity, but it will look something like this:
+
+  ```bluespec
+  #include <math.h>
+
+  union ui_float {
+    unsigned int i;
+    float f;
+  };
+
+  union ull_double {
+    unsigned long long i;
+    double f;
+  };
+
+  unsigned int bs_fp_expf(unsigned int x) {
+    ...
+  }
+
+  unsigned long long bs_fp_exp(unsigned long long x) {
+    ...
+  }
+
+  unsigned int bs_fp_logf(unsigned int x) {
+    ...
+  }
+
+  unsigned long long bs_fp_log(unsigned long long x) {
+    ...
+  }
+
+  ...
+  ```
+
+  For more information on what this file does, see the "Floating-point numbers"
+  section below.
+
 In a larger application, a Copilot user would instantiate `mkFibs` with a
 `FibsIfc` module that describes what should happen when the `even` and `odd`
 triggers fire. `FibsIfc` contains everything that the user must supply;
@@ -222,7 +279,7 @@ code generation for mkTop starts
 Elaborated module file created: mkTop.ba
 All packages are up to date.
 
-$ bsc -sim -e mkTop -o mkTop.exe
+$ bsc -sim -e mkTop -o mkTop.exe bs_fp.c
 Bluesim object created: mkTop.{h,o}
 Bluesim object created: model_mkTop.{h,o}
 Simulation shared library created: mkTop.exe.so
@@ -657,9 +714,9 @@ the common case.
 
 ## Floating-point numbers
 
-`copilot-bluespec` has partial support for Copilot's floating-point operations,
-as it is limited by what operations are provided by Bluespec's standard
-libraries. The following floating-point operations are supported:
+`copilot-bluespec` supports all of Copilot's floating-point operations with
+varying degrees of performance. The following floating-point operations compile
+directly to relatively performant circuits:
 
 * Basic arithmetic (`(+)`, `(-)`, `(*)`, `(/)`)
 * Equality checking (`(==)` and `(/=)`)
@@ -667,10 +724,15 @@ libraries. The following floating-point operations are supported:
 * `abs`
 * `signum`
 * `recip`
+
+These operations correspond to the floating-point operations that the Bluespec
+standard library provides that are well tested. Unfortunately, the Bluespec
+standard library does not offer well-tested versions (or even _any_ versions)
+of the remainder of Copilot's floating-point operations. The rest of these
+operations are instead implemented by using BDPI (Bluespec's foreign function
+interface) to interface with C code:
+
 * `sqrt`
-
-The following floating-point operations are _not_ supported:
-
 * `acos`
 * `asin`
 * `atan`
@@ -691,8 +753,102 @@ The following floating-point operations are _not_ supported:
 * `ceiling`
 * `floor`
 
-See https://github.com/B-Lang-org/bsc/issues/368 for further discussion on the
-unsupported operations.
+Implementing these operations via C provides high confidence that they are
+implemented correctly, but at a somewhat steep performance penalty.
+
+Because these operations need to be implemented via BDPI, `copilot-bluespec`
+generates two additional files: `BluespecFP.bsv` (which contains the Bluespec
+function stubs for each function implemented via BDPI) and `bs_fp.c` (which
+contains the corresponding C function definitions). To see how this works,
+let us take a look at one of the BDPI'd functions, `sqrt`:
+
+```bluespec
+import "BDPI" function Double bs_fp_sqrt (Double x);
+import "BDPI" function Float bs_fp_sqrtf (Float x);
+```
+
+This declares a Bluespec function `bs_fp_sqrt` that is implemented using a C
+function (also of the name `bs_fp_sqrt`) under the hood. This takes a Bluespec
+`Double` as an argument and also returns a `Double`. Note that `Double` is not
+treated magically by the Bluespec compiler here. This is because any Bluespec
+struct can be used in BDPI (provided that the struct type implements the `Bits`
+class), and Bluespec's `Double` is implemented as a struct with a `Bits`
+instance that exactly matches the bit layout expected by IEEE-754
+double-precision floats. (Similarly for Bluespec's `Float` type.)
+
+Note that at present, the `import "BDPI"` feature is only available when using
+the BSV syntax, not the BH syntax. As such, this is currently the only place
+where we generate BSV code.
+
+The corresponding C code for `bs_fp_sqrt(f)` is:
+
+```c
+union ull_double {
+  unsigned long long i;
+  double f;
+};
+
+union ui_float {
+  unsigned int i;
+  float f;
+};
+
+unsigned long long bs_fp_sqrt(unsigned long long x) {
+  union ull_double x_u;
+  union ull_double r_u;
+  x_u.i = x;
+  r_u.f = sqrt(x_u.f);
+  return r_u.i;
+}
+
+unsigned int bs_fp_sqrtf(unsigned int x) {
+  union ui_float x_u;
+  union ui_float r_u;
+  x_u.i = x;
+  r_u.f = sqrtf(x_u.f);
+  return r_u.i;
+}
+```
+
+There is a lot to unpack here. Let's go through this step by step:
+
+1. The C version of `bs_fp_sqrt` takes and returns an `unsigned long long`. The
+   use of `unsigned long long` is dictated by Bluespec itself: whenever you
+   use a Bluespec type in BDPI that fits in exactly 64 bits, then Bluespec
+   expects the corresponding C type to be `unsigned long long`. (You can see
+   this for yourself by inspecting the generated `imported_BDPI_functions.h`
+   header file.)
+
+   There is a similar story for `bs_fp_sqrtf`, which takes an `unsigned int`.
+   Bluespec dictates the use of `unsigned int` when the BDPI types fits in
+   exactly 32 bits.
+
+2. This poses something of a challenge for us, since we want the implementation
+   of `bs_fp_sqrt` to work over `double`s, not `unsigned long long`s. To make
+   this possible, we define a `union ull_double` type that allows easily
+   converting an `unsigned long long` to a `double` and vice versa.
+
+   There is an analogous story for `ui_float`, which allows conversion to and
+   from the `unsigned int` and `float` types.
+
+3. Finally, we perform the `sqrt(f)` function on the argument, using
+   `ull_double`/`ui_float` as necessary to make the types work out.
+
+Strictly speaking, it is only necessary to compile the generated `bs_fp.c` file
+if the generated Bluespec program makes use of any of the BDPI-related
+floating-point operations mentioned above. That being said, it doesn't hurt to
+compile it even if the generated Bluespec program _doesn't_ use any of them, so
+it's generally good practice to pass `bs_fp.c` to `bsc`.
+
+Eventually, we would like to stop using BDPI in favor of native Bluespec code,
+which would be more performant. To do so, would we need to address the
+following Bluespec issues:
+
+* The implementation of `sqrt` in Bluespec's standard library is buggy:
+  https://github.com/B-Lang-org/bsc/issues/710
+
+* Bluespec's standard library does not implement the remaining floating-point
+  operations at all: https://github.com/B-Lang-org/bsc/issues/368
 
 ## Warnings
 

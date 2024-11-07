@@ -27,6 +27,7 @@ import Copilot.Core
 -- Internal imports
 import Copilot.Compile.Bluespec.CodeGen
 import Copilot.Compile.Bluespec.External
+import Copilot.Compile.Bluespec.FloatingPoint
 import Copilot.Compile.Bluespec.Name
 import Copilot.Compile.Bluespec.Settings
 
@@ -53,6 +54,8 @@ compileWith bsSettings prefix spec
        createDirectoryIfMissing True dir
        writeFile (dir </> specTypesPkgName prefix ++ ".bs") typesBsFile
        writeFile (dir </> specIfcPkgName prefix ++ ".bs") ifcBsFile
+       writeFile (dir </> "bs_fp.c") copilotBluespecFloatingPointC
+       writeFile (dir </> "BluespecFP.bsv") copilotBluespecFloatingPointBSV
        writeFile (dir </> prefix ++ ".bs") bsFile
 
 -- | Compile a specification to a Bluespec.
@@ -106,6 +109,7 @@ compileBS _bsSettings prefix spec =
                         $ specTypesPkgName prefix
       , BS.CImpId False $ BS.mkId BS.NoPos $ fromString
                         $ specIfcPkgName prefix
+      , BS.CImpId False $ BS.mkId BS.NoPos "BluespecFP"
       ]
 
     moduleDef :: BS.CDefn
