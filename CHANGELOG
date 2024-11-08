@@ -1,3 +1,6 @@
+2024-11-08
+        * Version bump (4.1). (#25)
+
 2024-09-09
         * Version bump (4.0). (#23)
         * Support translating Copilot array updates to Bluespec. (#19)
