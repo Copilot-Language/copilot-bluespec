@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Translate Copilot Core expressions and operators to Bluespec.
 module Copilot.Compile.Bluespec.Expr
@@ -81,37 +82,36 @@ transOp1 op e =
                      (BS.CVar (BS.idSlashAt BS.NoPos))
                      [constNumTy ty 1, e]
     BwNot   _ty -> app $ BS.idInvertAt BS.NoPos
-    Sqrt    _ty -> BS.CSelect
-                     (BS.CApply
-                       (BS.CVar (BS.mkId BS.NoPos "sqrtFP"))
-                       [e, fpRM])
-                     BS.idPrimFst
 
     Cast fromTy toTy -> transCast fromTy toTy e
     GetField (Struct _)  _ f -> BS.CSelect e $ BS.mkId BS.NoPos $
                                 fromString $ lowercaseName $ accessorName f
     GetField _ _ _ -> impossible "transOp1" "copilot-bluespec"
 
-    -- Unsupported operations (see
-    -- https://github.com/B-Lang-org/bsc/discussions/534)
-    Exp     _ty -> unsupportedFPOp "exp"
-    Log     _ty -> unsupportedFPOp "log"
-    Acos    _ty -> unsupportedFPOp "acos"
-    Asin    _ty -> unsupportedFPOp "asin"
-    Atan    _ty -> unsupportedFPOp "atan"
-    Cos     _ty -> unsupportedFPOp "cos"
-    Sin     _ty -> unsupportedFPOp "sin"
-    Tan     _ty -> unsupportedFPOp "tan"
-    Acosh   _ty -> unsupportedFPOp "acosh"
-    Asinh   _ty -> unsupportedFPOp "asinh"
-    Atanh   _ty -> unsupportedFPOp "atanh"
-    Cosh    _ty -> unsupportedFPOp "cosh"
-    Sinh    _ty -> unsupportedFPOp "sinh"
-    Tanh    _ty -> unsupportedFPOp "tanh"
-    Ceiling _ty -> unsupportedFPOp "ceiling"
-    Floor   _ty -> unsupportedFPOp "floor"
+    -- BDPI-supported operations
+    Sqrt    ty -> appFP ty "sqrt"
+    Exp     ty -> appFP ty "exp"
+    Log     ty -> appFP ty "log"
+    Acos    ty -> appFP ty "acos"
+    Asin    ty -> appFP ty "asin"
+    Atan    ty -> appFP ty "atan"
+    Cos     ty -> appFP ty "cos"
+    Sin     ty -> appFP ty "sin"
+    Tan     ty -> appFP ty "tan"
+    Acosh   ty -> appFP ty "acosh"
+    Asinh   ty -> appFP ty "asinh"
+    Atanh   ty -> appFP ty "atanh"
+    Cosh    ty -> appFP ty "cosh"
+    Sinh    ty -> appFP ty "sinh"
+    Tanh    ty -> appFP ty "tanh"
+    Ceiling ty -> appFP ty "ceiling"
+    Floor   ty -> appFP ty "floor"
   where
+    app :: BS.Id -> BS.CExpr
     app i = BS.CApply (BS.CVar i) [e]
+
+    appFP :: forall t. Type t -> String -> BS.CExpr
+    appFP ty funPrefix = app $ fpFunId ty funPrefix
 
 -- | Translates a Copilot binary operator and its arguments into a Bluespec
 -- function.
@@ -144,13 +144,16 @@ transOp2 op e1 e2 =
       BS.CStructUpd e1 [(BS.mkId BS.NoPos field, e2)]
     UpdateField _ _ _ -> impossible "transOp2" "copilot-bluespec"
 
-    -- Unsupported operations (see
-    -- https://github.com/B-Lang-org/bsc/discussions/534)
-    Pow      _ty -> unsupportedFPOp "(**)"
-    Logb     _ty -> unsupportedFPOp "logb"
-    Atan2    _ty -> unsupportedFPOp "atan2"
+    -- BDPI-supported operations
+    Pow      ty -> appFP ty "pow"
+    Logb     ty -> appFP ty "logb"
+    Atan2    ty -> appFP ty "atan2"
   where
+    app :: BS.Id -> BS.CExpr
     app i = BS.CApply (BS.CVar i) [e1, e2]
+
+    appFP :: forall t. Type t -> String -> BS.CExpr
+    appFP ty funPrefix = app $ fpFunId ty funPrefix
 
 -- | Translates a Copilot ternary operator and its arguments into a Bluespec
 -- function.
@@ -637,6 +640,19 @@ cUpdateVector vec idx newElem =
     (BS.CVar (BS.mkId BS.NoPos "update"))
     [vec, idx, newElem]
 
+-- | Create a Bluespec identifier for a floating-point function that Bluespec
+-- imports using BDPI.
+fpFunId :: Type a -> String -> BS.Id
+fpFunId ty funPrefix =
+    BS.mkId BS.NoPos $ fromString $ "bs_fp_" ++ funName
+  where
+    funName :: String
+    funName =
+      case ty of
+        Float  -> funPrefix ++ "f"
+        Double -> funPrefix
+        _      -> impossible "fpFunId" "copilot-bluespec"
+
 -- | Explicitly annotate an expression with a type signature. This is necessary
 -- to prevent expressions from having ambiguous types in certain situations.
 withTypeAnnotation :: Type a -> BS.CExpr -> BS.CExpr
@@ -647,13 +663,6 @@ typeIsFloating :: Type a -> Bool
 typeIsFloating Float  = True
 typeIsFloating Double = True
 typeIsFloating _      = False
-
--- | Throw an error if attempting to use a floating-point operation that
--- Bluespec does not currently support.
-unsupportedFPOp :: String -> a
-unsupportedFPOp op =
-  error $ "Bluespec's FloatingPoint type does not support the " ++ op ++
-          " operation."
 
 -- | We assume round-near-even throughout, but this variable can be changed if
 -- needed. This matches the behavior of @fpRM@ in @copilot-theorem@'s

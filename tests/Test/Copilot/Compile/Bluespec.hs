@@ -438,8 +438,22 @@ arbitraryStructUpdate = elements
 -- | Generator of functions on Floating point numbers.
 arbitraryOpFloat :: (Floating t, Typed t) => Gen (Fun t t, [t] -> [t])
 arbitraryOpFloat = elements
-  [ (Op1 (Sqrt typeOf),  fmap sqrt)
-  , (Op1 (Recip typeOf), fmap recip)
+  [ (Op1 (Recip typeOf), fmap recip)
+  , (Op1 (Exp typeOf),   fmap exp)
+  , (Op1 (Sqrt typeOf),  fmap sqrt)
+  , (Op1 (Log typeOf),   fmap log)
+  , (Op1 (Sin typeOf),   fmap sin)
+  , (Op1 (Tan typeOf),   fmap tan)
+  , (Op1 (Cos typeOf),   fmap cos)
+  , (Op1 (Asin typeOf),  fmap asin)
+  , (Op1 (Atan typeOf),  fmap atan)
+  , (Op1 (Acos typeOf),  fmap acos)
+  , (Op1 (Sinh typeOf),  fmap sinh)
+  , (Op1 (Tanh typeOf),  fmap tanh)
+  , (Op1 (Cosh typeOf),  fmap cosh)
+  , (Op1 (Asinh typeOf), fmap asinh)
+  , (Op1 (Atanh typeOf), fmap atanh)
+  , (Op1 (Acosh typeOf), fmap acosh)
   ]
 
 -- | Generator of functions on that produce elements of any type.
@@ -1148,9 +1162,11 @@ compileBluespec baseName extraArgs = do
 -- | Compile a Bluespec file into an executable given its basename.
 compileExecutable :: String -> IO Bool
 compileExecutable topExe = do
-  result <- catch (do callProcess "bsc" $ [ "-sim", "-quiet" ]
-                                          ++ [ "-e", topExe ]
-                                          ++ [ "-o", topExe ]
+  result <- catch (do callProcess "bsc" [ "-sim", "-quiet"
+                                        , "-e", topExe
+                                        , "-o", topExe
+                                        , "bs_fp.c"
+                                        ]
                       return True
                   )
                   (\e -> do
