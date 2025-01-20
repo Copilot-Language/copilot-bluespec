@@ -8,9 +8,10 @@ module Copilot.Compile.Bluespec.Compile
   ) where
 
 -- External imports
-import Data.List                      (nub, union)
+import Data.List                      (nub, nubBy, union)
 import Data.Maybe                     (catMaybes, maybeToList)
 import Data.String                    (IsString (..))
+import Data.Type.Equality             (testEquality, (:~:)(Refl))
 import Data.Typeable                  (Typeable)
 import qualified Language.Bluespec.Classic.AST as BS
 import qualified Language.Bluespec.Classic.AST.Builtin.Ids as BS
@@ -29,6 +30,7 @@ import Copilot.Compile.Bluespec.CodeGen
 import Copilot.Compile.Bluespec.External
 import Copilot.Compile.Bluespec.FloatingPoint
 import Copilot.Compile.Bluespec.Name
+import Copilot.Compile.Bluespec.Representation
 import Copilot.Compile.Bluespec.Settings
 
 -- | Compile a specification to a Bluespec file.
@@ -39,10 +41,18 @@ import Copilot.Compile.Bluespec.Settings
 -- that are generated.
 compileWith :: BluespecSettings -> String -> Spec -> IO ()
 compileWith bsSettings prefix spec
-  | null (specTriggers spec)
+  | null triggers
   = do hPutStrLn stderr $
          "Copilot error: attempt at compiling empty specification.\n"
          ++ "You must define at least one trigger to generate Bluespec monitors."
+       exitFailure
+
+  | incompatibleTriggers triggers
+  = do hPutStrLn stderr $
+         "Copilot error: attempt at compiling specification with conflicting "
+         ++ "trigger definitions.\n"
+         ++ "Multiple triggers have the same name, but different argument "
+         ++ "types.\n"
        exitFailure
 
   | otherwise
@@ -57,6 +67,24 @@ compileWith bsSettings prefix spec
        writeFile (dir </> "bs_fp.c") copilotBluespecFloatingPointC
        writeFile (dir </> "BluespecFP.bsv") copilotBluespecFloatingPointBSV
        writeFile (dir </> prefix ++ ".bs") bsFile
+  where
+    triggers = specTriggers spec
+
+    -- Check that two triggers do no conflict, that is: if their names are
+    -- equal, the types of their arguments should be equal as well.
+    incompatibleTriggers :: [Trigger] -> Bool
+    incompatibleTriggers = pairwiseAny conflict
+      where
+        conflict :: Trigger -> Trigger -> Bool
+        conflict t1@(Trigger name1 _ _) t2@(Trigger name2 _ _) =
+          name1 == name2 && not (compareTrigger t1 t2)
+
+        -- True if the function holds for any pair of elements. We assume that
+        -- the function is commutative.
+        pairwiseAny :: (a -> a -> Bool) -> [a] -> Bool
+        pairwiseAny _ []     = False
+        pairwiseAny _ (_:[]) = False
+        pairwiseAny f (x:xs) = any (f x) xs || pairwiseAny f xs
 
 -- | Compile a specification to a Bluespec.
 --
@@ -136,11 +164,12 @@ compileBS _bsSettings prefix spec =
     ifcModId = BS.mkId BS.NoPos "ifcMod"
 
     rules :: [BS.CRule]
-    rules = map mkTriggerRule triggers ++ maybeToList (mkStepRule streams)
+    rules = map mkTriggerRule uniqueTriggers ++ maybeToList (mkStepRule streams)
 
-    streams  = specStreams spec
-    triggers = specTriggers spec
-    exts     = gatherExts streams triggers
+    streams        = specStreams spec
+    triggers       = specTriggers spec
+    uniqueTriggers = mkUniqueTriggers triggers
+    exts           = gatherExts streams triggers
 
     ifcId     = BS.mkId BS.NoPos $ fromString $ specIfcName prefix
     ifcFields = mkSpecIfcFields triggers exts
@@ -169,7 +198,7 @@ compileBS _bsSettings prefix spec =
     genFuns :: [BS.CDefl]
     genFuns =  map accessDecln streams
             ++ map streamGen streams
-            ++ concatMap triggerGen triggers
+            ++ concatMap triggerGen uniqueTriggers
       where
         accessDecln :: Stream -> BS.CDefl
         accessDecln (Stream sId buff _ ty) = mkAccessDecln sId ty buff
@@ -177,11 +206,12 @@ compileBS _bsSettings prefix spec =
         streamGen :: Stream -> BS.CDefl
         streamGen (Stream sId _ expr ty) = mkGenFun (generatorName sId) expr ty
 
-        triggerGen :: Trigger -> [BS.CDefl]
-        triggerGen (Trigger name guard args) = guardDef : argDefs
+        triggerGen :: UniqueTrigger -> [BS.CDefl]
+        triggerGen (UniqueTrigger uniqueName (Trigger _name guard args)) =
+            guardDef : argDefs
           where
-            guardDef = mkGenFun (guardName name) guard Bool
-            argDefs  = map argGen (zip (argNames name) args)
+            guardDef = mkGenFun (guardName uniqueName) guard Bool
+            argDefs  = map argGen (zip (argNames uniqueName) args)
 
             argGen :: (String, UExpr) -> BS.CDefl
             argGen (argName, UExpr ty expr) = mkGenFun argName expr ty
@@ -212,8 +242,10 @@ compileIfcBS _bsSettings prefix spec =
     ifcFields = mkSpecIfcFields triggers exts
 
     streams  = specStreams spec
-    triggers = specTriggers spec
     exts     = gatherExts streams triggers
+
+    -- Remove duplicates due to multiple guards for the same trigger.
+    triggers = nubBy compareTrigger (specTriggers spec)
 
     ifcDef :: BS.CDefn
     ifcDef = BS.Cstruct
@@ -244,7 +276,9 @@ compileTypesBS _bsSettings prefix spec =
 
     exprs    = gatherExprs streams triggers
     streams  = specStreams spec
-    triggers = specTriggers spec
+
+    -- Remove duplicates due to multiple guards for the same trigger.
+    triggers = nubBy compareTrigger (specTriggers spec)
 
     -- Generate type declarations.
     mkTypeDeclns :: [UExpr] -> [BS.CDefn]
@@ -296,3 +330,21 @@ gatherExprs streams triggers =  map streamUExpr streams
   where
     streamUExpr  (Stream _ _ expr ty)   = UExpr ty expr
     triggerUExpr (Trigger _ guard args) = UExpr Bool guard : args
+
+-- | We consider triggers to be equal, if their names match and the number and
+-- types of arguments.
+compareTrigger :: Trigger -> Trigger -> Bool
+compareTrigger (Trigger name1 _ args1) (Trigger name2 _ args2)
+  = name1 == name2 && compareArguments args1 args2
+
+  where
+    compareArguments :: [UExpr] -> [UExpr] -> Bool
+    compareArguments []     []     = True
+    compareArguments []     _      = False
+    compareArguments _      []     = False
+    compareArguments (x:xs) (y:ys) = compareUExpr x y && compareArguments xs ys
+
+    compareUExpr :: UExpr -> UExpr -> Bool
+    compareUExpr (UExpr ty1 _) (UExpr ty2 _)
+      | Just Refl <- testEquality ty1 ty2 = True
+      | otherwise                         = False
