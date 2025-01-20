@@ -1,5 +1,6 @@
-2024-11-11
+2025-01-20
         * Implement missing floating-point operations. (#28)
+        * Allow using same trigger name in multiple declarations. (#30)
 
 2024-11-08
         * Version bump (4.1). (#25)

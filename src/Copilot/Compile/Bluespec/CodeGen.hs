@@ -35,6 +35,7 @@ import Copilot.Core
 import Copilot.Compile.Bluespec.Expr
 import Copilot.Compile.Bluespec.External
 import Copilot.Compile.Bluespec.Name
+import Copilot.Compile.Bluespec.Representation
 import Copilot.Compile.Bluespec.Type
 
 -- | Write a generator function for a stream.
@@ -151,22 +152,24 @@ mkSpecIfcFields triggers exts =
       mkField name $ tReg `BS.TAp` transType ty
 
 -- | Define a rule for a trigger function.
-mkTriggerRule :: Trigger -> BS.CRule
-mkTriggerRule (Trigger name _ args) =
+mkTriggerRule :: UniqueTrigger -> BS.CRule
+mkTriggerRule (UniqueTrigger uniqueName (Trigger name _ args)) =
     BS.CRule
       []
-      (Just $ cLit $ BS.LString name)
+      (Just $ cLit $ BS.LString uniqueName)
       [ BS.CQFilter $
         BS.CVar $ BS.mkId BS.NoPos $
-        fromString $ guardName name
+        fromString $ guardName uniqueName
       ]
       (BS.CApply nameExpr args')
   where
     ifcArgId = BS.mkId BS.NoPos $ fromString ifcArgName
+    -- Note that we use 'name' here instead of 'uniqueName', as 'name' is the
+    -- name of the actual external function.
     nameId   = BS.mkId BS.NoPos $ fromString $ lowercaseName name
     nameExpr = BS.CSelect (BS.CVar ifcArgId) nameId
 
-    args'   = take (length args) (map argCall (argNames name))
+    args'   = take (length args) (map argCall (argNames uniqueName))
     argCall = BS.CVar . BS.mkId BS.NoPos . fromString
 
 -- | Writes the @step@ rule that updates all streams.
