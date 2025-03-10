@@ -1,3 +1,6 @@
+2025-03-10
+        * Version bump (4.3). (#34)
+
 2025-01-20
         * Version bump (4.2). (#31)
         * Implement missing floating-point operations. (#28)
