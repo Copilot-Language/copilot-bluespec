@@ -47,11 +47,12 @@ import Text.ParserCombinators.ReadPrec      (minPrec)
 -- External imports: Copilot
 import Copilot.Core hiding (Property)
 
--- External imports: Modules being tested
-import Copilot.Compile.Bluespec          (bluespecSettingsOutputDirectory,
-                                          compile, compileWith,
-                                          mkDefaultBluespecSettings)
-import Copilot.Compile.Bluespec.External (External (extName), gatherExts)
+-- External imports
+import Copilot.Compile.Bluespec (bluespecSettingsOutputDirectory, compile,
+                                 compileWith, mkDefaultBluespecSettings)
+
+-- Internal imports
+import Test.Copilot.Compile.Bluespec.External (External (extName), gatherExts)
 
 -- * Constants
 

@@ -1,8 +1,14 @@
 {-# LANGUAGE ExistentialQuantification #-}
 
--- | Represent information about externs needed in the generation of Bluespec
+-- | This is a duplicate version of @Copilot.Compile.Bluespec.External@ that is
+-- specific to the test suite. Ideally, we would move this into a common library
+-- that is shared between both @copilot-bluespec@ and @copilot-c99@ so that we
+-- can avoid this duplication. See
+-- https://github.com/Copilot-Language/copilot-bluespec/issues/3.
+--
+-- Represent information about externs needed in the generation of Bluespec
 -- code for stream declarations and triggers.
-module Copilot.Compile.Bluespec.External
+module Test.Copilot.Compile.Bluespec.External
   ( External(..)
   , gatherExts
   ) where
@@ -10,7 +16,7 @@ module Copilot.Compile.Bluespec.External
 -- External imports
 import Data.List (unionBy)
 
--- Internal imports: Copilot
+-- External imports: Copilot
 import Copilot.Core ( Expr (..), Stream (..), Trigger (..), Type, UExpr (..) )
 
 -- | Representation of external variables.
@@ -22,7 +28,7 @@ data External = forall a. External
 -- | Collect all external variables from the streams and triggers.
 --
 -- Although Copilot specifications can contain also properties and theorems,
--- the C99 backend currently only generates code for streams and triggers.
+-- the Bluespec backend currently only generates code for streams and triggers.
 gatherExts :: [Stream] -> [Trigger] -> [External]
 gatherExts streams triggers = streamsExts `extUnion` triggersExts
   where
