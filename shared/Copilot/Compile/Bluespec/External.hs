@@ -22,7 +22,7 @@ data External = forall a. External
 -- | Collect all external variables from the streams and triggers.
 --
 -- Although Copilot specifications can contain also properties and theorems,
--- the C99 backend currently only generates code for streams and triggers.
+-- the Bluespec backend currently only generates code for streams and triggers.
 gatherExts :: [Stream] -> [Trigger] -> [External]
 gatherExts streams triggers = streamsExts `extUnion` triggersExts
   where
