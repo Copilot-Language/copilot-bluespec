@@ -1,3 +1,6 @@
+2025-03-20
+        * Expose Copilot.Compile.Bluespec.External. (#36)
+
 2025-03-10
         * Version bump (4.3). (#34)
 
