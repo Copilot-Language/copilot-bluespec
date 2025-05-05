@@ -1,5 +1,6 @@
 2025-03-20
         * Move Copilot.Compile.Bluespec.External out of shared directory. (#36)
+        * Allow building with filepath-1.5.*. (#39)
 
 2025-03-10
         * Version bump (4.3). (#34)
