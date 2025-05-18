@@ -16,7 +16,7 @@ import Data.Typeable                  (Typeable)
 import qualified Language.Bluespec.Classic.AST as BS
 import qualified Language.Bluespec.Classic.AST.Builtin.Ids as BS
 import qualified Language.Bluespec.Classic.AST.Builtin.Types as BS
-import Text.PrettyPrint.HughesPJClass (Pretty (..), render)
+import qualified Language.Bluespec.Classic.AST.Pretty as BS
 import System.Directory               (createDirectoryIfMissing)
 import System.Exit                    (exitFailure)
 import System.FilePath                ((</>))
@@ -56,9 +56,9 @@ compileWith bsSettings prefix spec
        exitFailure
 
   | otherwise
-  = do let typesBsFile = render $ pPrint $ compileTypesBS bsSettings prefix spec
-           ifcBsFile   = render $ pPrint $ compileIfcBS   bsSettings prefix spec
-           bsFile      = render $ pPrint $ compileBS      bsSettings prefix spec
+  = do let typesBsFile = BS.ppReadable $ compileTypesBS bsSettings prefix spec
+           ifcBsFile   = BS.ppReadable $ compileIfcBS   bsSettings prefix spec
+           bsFile      = BS.ppReadable $ compileBS      bsSettings prefix spec
 
        let dir = bluespecSettingsOutputDirectory bsSettings
        createDirectoryIfMissing True dir
