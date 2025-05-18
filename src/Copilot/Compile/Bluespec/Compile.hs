@@ -16,7 +16,7 @@ import Data.Typeable                  (Typeable)
 import qualified Language.Bluespec.Classic.AST as BS
 import qualified Language.Bluespec.Classic.AST.Builtin.Ids as BS
 import qualified Language.Bluespec.Classic.AST.Builtin.Types as BS
-import qualified Language.Bluespec.Classic.AST.Pretty as BS
+import qualified Language.Bluespec.SystemVerilog.AST.Pretty as BS
 import System.Directory               (createDirectoryIfMissing)
 import System.Exit                    (exitFailure)
 import System.FilePath                ((</>))
@@ -56,17 +56,17 @@ compileWith bsSettings prefix spec
        exitFailure
 
   | otherwise
-  = do let typesBsFile = BS.ppReadable $ compileTypesBS bsSettings prefix spec
-           ifcBsFile   = BS.ppReadable $ compileIfcBS   bsSettings prefix spec
-           bsFile      = BS.ppReadable $ compileBS      bsSettings prefix spec
+  = do let typesBsFile = BS.pvpReadable $ compileTypesBS bsSettings prefix spec
+           ifcBsFile   = BS.pvpReadable $ compileIfcBS   bsSettings prefix spec
+           bsFile      = BS.pvpReadable $ compileBS      bsSettings prefix spec
 
        let dir = bluespecSettingsOutputDirectory bsSettings
        createDirectoryIfMissing True dir
-       writeFile (dir </> specTypesPkgName prefix ++ ".bs") typesBsFile
-       writeFile (dir </> specIfcPkgName prefix ++ ".bs") ifcBsFile
+       writeFile (dir </> specTypesPkgName prefix ++ ".bsv") typesBsFile
+       writeFile (dir </> specIfcPkgName prefix ++ ".bsv") ifcBsFile
        writeFile (dir </> "bs_fp.c") copilotBluespecFloatingPointC
        writeFile (dir </> "BluespecFP.bsv") copilotBluespecFloatingPointBSV
-       writeFile (dir </> prefix ++ ".bs") bsFile
+       writeFile (dir </> prefix ++ ".bsv") bsFile
   where
     triggers = specTriggers spec
 
