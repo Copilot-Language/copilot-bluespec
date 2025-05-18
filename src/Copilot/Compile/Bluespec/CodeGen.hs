@@ -198,16 +198,16 @@ mkStepRule streams
       where
         bufferUpdate =
           BS.CSExpr Nothing $
-          BS.Cwrite
-            BS.NoPos
+          BS.CBinOp
             (cIndexVector (BS.CVar buffId) (BS.CVar indexId))
+            BS.idAssign
             (BS.CVar genId)
 
         indexUpdate =
           BS.CSExpr Nothing $
-          BS.Cwrite
-            BS.NoPos
+          BS.CBinOp
             (BS.CVar indexId)
+            BS.idAssign
             (BS.CBinOp
               incIndex
               (BS.idPercentAt BS.NoPos)
