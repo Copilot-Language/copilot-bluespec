@@ -119,13 +119,13 @@ mkAccessDecln sId ty xs =
     nameId     = BS.mkId BS.NoPos $ fromString name
     buffLength = cLit $ BS.LInt $ BS.ilDec $ toInteger $ length xs
     argId      = BS.mkId BS.NoPos "x"
-    index      = BS.CApply (BS.CVar (BS.idPercentAt BS.NoPos))
-                   [ BS.CApply (BS.CVar BS.idPlus)
-                       [ BS.CVar (BS.mkId BS.NoPos (fromString (indexName sId)))
-                       , BS.CVar argId
-                       ]
-                   , buffLength
-                   ]
+    index      = BS.CBinOp
+                   (BS.CBinOp
+                     (BS.CVar (BS.mkId BS.NoPos (fromString (indexName sId))))
+                     BS.idPlus
+                     (BS.CVar argId))
+                   (BS.idPercentAt BS.NoPos)
+                   buffLength
     indexExpr  = cIndexVector
                    (BS.CVar (BS.mkId BS.NoPos (fromString (streamName sId))))
                    index
@@ -208,14 +208,16 @@ mkStepRule streams
           BS.Cwrite
             BS.NoPos
             (BS.CVar indexId)
-            (BS.CApply (BS.CVar (BS.idPercentAt BS.NoPos))
-                       [incIndex, buffLength])
+            (BS.CBinOp
+              incIndex
+              (BS.idPercentAt BS.NoPos)
+              buffLength)
           where
             buffLength = cLit $ BS.LInt $ BS.ilDec $ toInteger $ length buff
-            incIndex   = BS.CApply (BS.CVar BS.idPlus)
-                           [ BS.CVar indexId
-                           , cLit $ BS.LInt $ BS.ilDec 1
-                           ]
+            incIndex   = BS.CBinOp
+                           (BS.CVar indexId)
+                           BS.idPlus
+                           (cLit $ BS.LInt $ BS.ilDec 1)
 
         buffId  = BS.mkId BS.NoPos $ fromString $ streamName sId
         genId   = BS.mkId BS.NoPos $ fromString $ generatorName sId
